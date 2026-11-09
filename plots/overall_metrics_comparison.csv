@@ -1,0 +1,5 @@
+Model,Overall MAE (µg/m³),Overall RMSE (µg/m³),Overall R²
+Persistence,17.04,26.17,0.4623
+LSTM,12.48,17.58,0.7574
+Transformer,12.75,17.69,0.7544
+GAT-Transformer,12.08,17.83,0.7506

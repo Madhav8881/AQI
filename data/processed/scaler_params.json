@@ -1,0 +1,39 @@
+{
+  "mean": 98.30937194824219,
+  "std": 87.87621307373047,
+  "input_window": 24,
+  "horizons": [
+    1,
+    3,
+    6,
+    12
+  ],
+  "station_ids": [
+    "site_301",
+    "site_114",
+    "site_113",
+    "site_117",
+    "site_122",
+    "site_118",
+    "site_1420",
+    "site_115",
+    "site_125",
+    "site_119",
+    "site_124",
+    "site_1428"
+  ],
+  "station_names": [
+    "Anand Vihar",
+    "IHBAS Dilshad Garden",
+    "Shadipur",
+    "ITO",
+    "Mandir Marg",
+    "DTU",
+    "Ashok Vihar",
+    "NSIT Dwarka",
+    "Punjabi Bagh",
+    "Sirifort",
+    "R K Puram",
+    "Okhla Phase-2"
+  ]
+}
