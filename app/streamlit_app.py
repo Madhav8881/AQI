@@ -230,7 +230,8 @@ with st.sidebar:
     if not models:
         st.error("No trained models found — run `python src/train_eval.py` first.")
 
-tab_today, tab_cmp, tab_about = st.tabs(["📡 Today", "🏆 How good is it?", "ℹ️ About"])
+tab_today, tab_real, tab_cmp, tab_about = st.tabs(
+    ["📡 Today", "🎯 Prediction vs reality", "🏆 How good is it?", "ℹ️ About"])
 
 
 # ----------------------------------------------------------------------------- today
@@ -428,6 +429,120 @@ def render_today():
 
 with tab_today:
     render_today()
+
+
+# ----------------------------------------------------------------------------- prediction vs reality
+CAT_EDGES = np.array([b[1] for b in C.AQI_BANDS[:-1]])
+
+
+def render_reality():
+    st.markdown("### Prediction vs reality")
+    st.markdown("Every hour the app saves what the model **predicts** for the next 1–24 hours. When that hour "
+                "arrives, it records what the sensor **actually measured**. This page puts the two side by side.")
+    readings, fcs = L.load_readings(), L.load_forecasts()
+    sc = L.scored_forecasts(readings, fcs)
+    if sc.empty:
+        st.info("No forecast has reached its time yet. The first comparisons appear about an hour after the "
+                "collector starts, and the full picture builds up over several days. "
+                "(Start it with `scripts/start_collector.bat` and leave the window open.)")
+        return
+    sc = sc.assign(err=sc["pred"] - sc["actual"])
+    sc["abs_err"] = sc["err"].abs()
+    sc["band_ok"] = np.digitize(sc["pred"], CAT_EDGES) == np.digitize(sc["actual"], CAT_EDGES)
+    primary = "Ensemble" if (sc["model"] == "Ensemble").any() else "GAT-Transformer"
+    first, last = sc["issued_at"].min(), sc["target_time"].max()
+
+    k = st.columns(4)
+    k[0].metric("Period covered", f"{first:%d %b} – {last:%d %b}")
+    k[1].metric("Hours with forecasts", f"{sc['issued_at'].nunique()}")
+    k[2].metric("Forecasts checked", f"{int((sc['model'] == primary).sum()):,}")
+    k[3].metric("Stations", f"{sc['station_id'].nunique()}")
+
+    g = sc.groupby(["model", "horizon"]).agg(miss=("abs_err", "mean"), bias=("err", "mean"),
+                                             band=("band_ok", "mean"), n=("abs_err", "size"))
+    leads = sorted(int(h) for h in sc["horizon"].unique())
+    lead = st.radio("How far ahead?", leads, index=min(2, len(leads) - 1), horizontal=True, key="real_lead",
+                    format_func=lambda h: f"{h} hour{'s' if h > 1 else ''} ahead")
+    a = g.loc[(primary, lead)]
+    c = st.columns(4)
+    c[0].metric("Our forecast misses by", f"{a.miss:.0f} µg/m³",
+                help="Average gap between what we predicted and what the sensor measured. Smaller is better.")
+    if ("Persistence", lead) in g.index:
+        b = g.loc[("Persistence", lead)]
+        c[1].metric("Simple guess misses by", f"{b.miss:.0f} µg/m³",
+                    help="The simple guess assumes the air stays exactly as it is now.")
+        c[2].metric("Ours is closer by", f"{1 - a.miss / b.miss:.0%}")
+        c[3].metric("Right colour band", f"{a.band:.0%}", f"{(a.band - b.band) * 100:+.0f} points vs simple guess")
+    bias = float(sc.loc[sc["model"] == primary, "err"].mean())
+    st.caption(f"Across all forecasts, our predictions were on average {abs(bias):.0f} µg/m³ "
+               f"{'higher' if bias > 0 else 'lower'} than reality.")
+
+    sid = stations["station_id"].iloc[sidx]
+    st.markdown(f"#### {station}: forecasts made {lead} hour{'s' if lead > 1 else ''} ahead, and what happened")
+    d = sc[(sc["station_id"] == sid) & (sc["horizon"] == lead)]
+    if d.empty:
+        st.caption("No checked forecasts for this station yet.")
+    else:
+        fig = go.Figure()
+        act = d[d["model"] == primary].sort_values("target_time")
+        fig.add_trace(go.Scatter(x=act["target_time"], y=act["actual"], name="What the sensor measured",
+                                 mode="lines+markers", line=dict(color="#111827", width=2.5)))
+        for m in [primary, "Persistence"]:
+            x = d[d["model"] == m].sort_values("target_time")
+            fig.add_trace(go.Scatter(x=x["target_time"], y=x["pred"], name=nm(m), mode="lines+markers",
+                                     line=dict(color=MODEL_COLORS.get(m), width=3 if m == primary else 1.6)))
+        ymax = float(max(d["actual"].max(), d["pred"].max())) * 1.12
+        add_aqi_bands(fig, ymax)
+        fig.update_layout(height=420, yaxis_title="PM2.5 (µg/m³) — higher is dirtier", yaxis_range=[0, ymax],
+                          hovermode="x unified", margin=dict(l=10, r=10, t=30, b=10),
+                          legend=dict(orientation="h", y=1.12))
+        st.plotly_chart(fig, width="stretch")
+        st.caption("Each point is plotted at the time it was forecast FOR. The simple guess always lags behind "
+                   "reality, because it only repeats the reading from several hours earlier.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**All stations, {lead} hour{'s' if lead > 1 else ''} ahead**")
+        d_all = sc[(sc["model"] == primary) & (sc["horizon"] == lead)]
+        pts = d_all.sample(min(len(d_all), 4000), random_state=0)
+        lim = float(max(pts["actual"].max(), pts["pred"].max())) * 1.05
+        fig = px.scatter(pts, x="actual", y="pred", opacity=0.35, height=400,
+                         labels={"actual": "What the sensor measured (µg/m³)", "pred": "What we predicted (µg/m³)"},
+                         color_discrete_sequence=[MODEL_COLORS.get(primary, "#7C3AED")])
+        fig.add_trace(go.Scatter(x=[0, lim], y=[0, lim], mode="lines", name="Perfect forecast",
+                                 line=dict(color="#6B7280", dash="dash")))
+        fig.update_layout(xaxis_range=[0, lim], yaxis_range=[0, lim], margin=dict(l=10, r=10, t=10, b=10),
+                          showlegend=False)
+        st.plotly_chart(fig, width="stretch")
+        st.caption("Each dot is one forecast. The closer to the dashed line, the better the forecast.")
+    with c2:
+        st.markdown("**Every forecast time**")
+        rows = []
+        for h in leads:
+            if (primary, h) in g.index and ("Persistence", h) in g.index:
+                a_, b_ = g.loc[(primary, h)], g.loc[("Persistence", h)]
+                rows.append({"Hours ahead": h, "Our forecast misses by (µg/m³)": round(a_.miss, 1),
+                             "Simple guess misses by (µg/m³)": round(b_.miss, 1),
+                             "Ours is closer by": f"{1 - a_.miss / b_.miss:.0%}",
+                             "Right colour band": f"{a_.band:.0%}", "Forecasts checked": int(a_.n)})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+    with st.expander("Results for every station"):
+        sd = sc[sc["horizon"] == lead].groupby(["station_id", "model"])["abs_err"].mean().unstack("model")
+        sd = sd[[m for m in (primary, "Persistence") if m in sd.columns]]
+        sd.index = sd.index.map(stations.set_index("station_id")["name"])
+        sd.columns = [nm(m) for m in sd.columns]
+        sd.index.name = f"Station ({lead} h ahead, average miss in µg/m³)"
+        st.dataframe(sd.round(1).sort_values(sd.columns[0]), width="stretch")
+    st.download_button("⬇️ Download every checked forecast (CSV)", sc.drop(columns=["abs_err", "band_ok"]).to_csv(index=False),
+                       file_name="prediction_vs_reality.csv", mime="text/csv")
+    st.caption("Live readings come from the World Air Quality Index project, which converts the official stations' "
+               "AQI values to µg/m³; they can differ slightly from CPCB's own files, and readings above about "
+               "500 µg/m³ are capped.")
+
+
+with tab_real:
+    render_reality()
 
 
 # ----------------------------------------------------------------------------- how good is it

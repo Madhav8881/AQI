@@ -32,7 +32,7 @@ if "AQI_RUN" not in os.environ and os.path.exists(os.path.join(
 
 import config as C  # noqa: E402
 
-LIVE_DIR = os.path.join(C.ROOT, "data", "live")
+LIVE_DIR = os.environ.get("AQI_LIVE_DIR") or os.path.join(C.ROOT, "data", "live")
 READINGS_CSV = os.path.join(LIVE_DIR, "readings.csv")
 FORECASTS_CSV = os.path.join(LIVE_DIR, "forecasts.csv" if C.RUN == "holdout" else f"forecasts_{C.RUN}.csv")
 MAP_CSV = os.path.join(C.PROCESSED_DIR, "waqi_station_map.csv")
@@ -148,8 +148,19 @@ def load_readings():
 
 def load_forecasts():
     if not os.path.exists(FORECASTS_CSV):
-        return pd.DataFrame(columns=["issued_at", "model", "station_id", "horizon", "target_time", "pred"])
+        return pd.DataFrame(columns=["issued_at", "history_hours", "model_version", "model", "station_id",
+                                     "horizon", "target_time", "pred"])
     return pd.read_csv(FORECASTS_CSV, parse_dates=["issued_at", "target_time"])
+
+
+def model_version():
+    """Identifies the models now in use (from their checkpoint files' save time). Every logged
+    forecast carries it, so scoring never mixes forecasts from different versions of the models."""
+    files = [f for f in os.listdir(C.CHECKPOINTS_DIR)
+             if f.endswith(".pt") and "_fullhist" not in f and "_beforeall" not in f]
+    if not files:
+        return "v0"
+    return "v" + str(int(max(os.path.getmtime(os.path.join(C.CHECKPOINTS_DIR, f)) for f in files)))
 
 
 def store_readings(new):
@@ -209,11 +220,12 @@ def log_forecast(fc, data, issued_at, history_hours):
     if len(old) and (old["issued_at"] == issued_at).any():
         return old
     rows = []
+    version = model_version()
     for name, arr in fc.items():
         for hi, h in enumerate(C.HORIZONS):
             for j, sid in enumerate(data.stations["station_id"]):
                 rows.append({"issued_at": issued_at, "history_hours": history_hours,
-                             "model": name, "station_id": sid, "horizon": h,
+                             "model_version": version, "model": name, "station_id": sid, "horizon": h,
                              "target_time": issued_at + pd.Timedelta(hours=h),
                              "pred": round(float(arr[hi, j]), 1)})
     df = pd.concat([old, pd.DataFrame(rows)], ignore_index=True)
@@ -224,19 +236,28 @@ def log_forecast(fc, data, issued_at, history_hours):
 MIN_HISTORY_FOR_SCORING = 1
 
 
+def scored_forecasts(readings, forecasts, min_history=MIN_HISTORY_FOR_SCORING):
+    """Live forecasts from the models currently in use whose target hour has since been observed,
+    one row each: model, station_id, horizon, issued_at, target_time, pred, actual (µg/m³).
+    Forecasts from older model versions, or made with fewer than min_history hours of collected
+    input, are left out (accuracy is a little lower with very little history)."""
+    cols = ["model", "station_id", "horizon", "issued_at", "target_time", "pred", "actual"]
+    if forecasts.empty or readings.empty or "model_version" not in forecasts:
+        return pd.DataFrame(columns=cols)
+    f = forecasts[forecasts["model_version"].astype(str) == model_version()]
+    hist = f["history_hours"] if "history_hours" in f else pd.Series(0, index=f.index)
+    f = f[hist.fillna(0) >= min_history]
+    j = f.merge(readings[["station_id", "time", "pm25"]],
+                left_on=["station_id", "target_time"], right_on=["station_id", "time"])
+    return j.rename(columns={"pm25": "actual"})[cols]
+
+
 def live_scores(readings, forecasts, min_history=MIN_HISTORY_FOR_SCORING):
-    """MAE of logged live forecasts whose target hour has since been observed. Forecasts issued with
-    fewer than min_history hours of collected input are skipped. Accuracy is a little lower when little
-    history has been collected (about 12% higher error with only the current hour)."""
-    if forecasts.empty or readings.empty:
-        return pd.DataFrame()
-    hist = forecasts["history_hours"] if "history_hours" in forecasts else pd.Series(0, index=forecasts.index)
-    forecasts = forecasts[hist.fillna(0) >= min_history]
-    j = forecasts.merge(readings[["station_id", "time", "pm25"]],
-                        left_on=["station_id", "target_time"], right_on=["station_id", "time"])
+    """Average miss (MAE) per model and lead time of the scored live forecasts."""
+    j = scored_forecasts(readings, forecasts, min_history)
     if j.empty:
         return pd.DataFrame()
-    j["abs_err"] = (j["pred"] - j["pm25"]).abs()
+    j["abs_err"] = (j["pred"] - j["actual"]).abs()
     return j.groupby(["model", "horizon"]).agg(MAE=("abs_err", "mean"), n=("abs_err", "size")).reset_index()
 
 
@@ -263,15 +284,39 @@ def collect(data=None, models=None, token=None):
             "latest": latest, "hours_of_history": n_hours}
 
 
+HEARTBEAT = os.path.join(LIVE_DIR, "collector.heartbeat")
+
+
+def another_collector_running(max_age_min=20):
+    """True if a different collector process wrote its heartbeat recently (two collectors writing the
+    same files could clash). A collector that has stopped goes stale after max_age_min."""
+    try:
+        pid, ts = open(HEARTBEAT).read().split(",")
+        return int(pid) != os.getpid() and time.time() - float(ts) < max_age_min * 60
+    except Exception:
+        return False
+
+
+def beat():
+    os.makedirs(LIVE_DIR, exist_ok=True)
+    with open(HEARTBEAT, "w") as f:
+        f.write(f"{os.getpid()},{time.time()}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--loop", action="store_true", help="collect every --every minutes")
     ap.add_argument("--every", type=int, default=15)
     args = ap.parse_args()
+    if args.loop and another_collector_running():
+        print("Another collector is already running, so this one will not start. "
+              "It will be taken over automatically if that one stops.", flush=True)
+        raise SystemExit(3)
     from data import AQIData
     data = AQIData()
     models = load_models(data)
     while True:
+        beat()
         try:
             r = collect(data, models)
             print(f"{pd.Timestamp.now():%Y-%m-%d %H:%M} collected {r['stations']} stations, "
