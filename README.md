@@ -191,9 +191,9 @@ immediately.
    ```powershell
    python src/live.py --loop
    ```
-The **📡 Today (live)** tab shows current readings, the next-24-h forecast for every station, and how
+The **📡 Today** tab shows current readings, the next-24-h forecast for every station, and how
 accurate the live forecasts have been so far. Live forecasts come from the final models in
-`checkpoints/final/`; the evaluated models in `checkpoints/` back the "How good is the model?" tab.
+`checkpoints/final/`; the evaluated models in `checkpoints/` back the "How good is it?" tab.
 
 ### Re-running the pipeline
 
@@ -225,10 +225,10 @@ AQI_RUN=final python train_eval.py --seeds 0 --train-frac 0.25 --no-eval --epoch
 
 No preparation needed: the app works from the current live readings. (If the collector has been running for a while, the live accuracy table will already have scores to show.)
 
-1. **Today (live)** – Delhi's PM2.5 right now on a map. Click a station: its live readings and every model's forecast for the next 24 hours.
+1. **Today** – Delhi's air quality right now on a map, in plain language: colour-coded categories, health advice, and what to expect over the next 24 hours for any station you click.
 2. **Live accuracy** – scroll down: *"How accurate have the live forecasts been?"* scores the forecasts made over the past day against the real readings that arrived since.
 3. **Sensor failure, live** – switch on *Simulate sensor failure*. The *live sensor-failure check* shows each model's estimate of the station's current value made **without its own data**, next to the real reading: the LSTM drifts, the **Robust GAT-Transformer** stays close by using the neighbours. The bar chart shows which neighbours it relied on.
-4. **How good is the model?** – the proof: results on two unseen years (Oct 2024 – Sep 2026), significance tests, the sensor-failure test across all stations, and the per-station error map.
+4. **How good is it?** – the proof: results on two unseen years (Oct 2024 – Sep 2026), significance tests, the sensor-failure test across all stations, and the per-station error map.
 
 ---
 
