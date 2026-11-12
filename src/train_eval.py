@@ -6,12 +6,18 @@ then run the full evaluation (evaluate.py).
 - Early stopping on validation loss; best checkpoint per (model, seed) is kept.
 - Each epoch uses a fresh random fraction of training origins (adjacent hourly windows are
   nearly identical, so this cuts CPU time with little information loss).
+- Optional history dropout (--history-dropout p): with probability p a training sample keeps only
+  its last k hours of input (k random in 1..23), so the model also works right after start-up in
+  live mode, when only a few hours of readings have been collected. --finetune continues from the
+  existing checkpoint instead of starting from scratch (the original is kept as *_fullhist.pt).
 Usage:  python train_eval.py [--seeds 0 1 2] [--epochs 20] [--models LSTM ...] [--threads 4]
+        python train_eval.py --models "GAT-Transformer" --finetune --history-dropout 0.5 --epochs 8
         python train_eval.py --eval-only
 """
 import argparse
 import json
 import os
+import shutil
 import time
 
 import numpy as np
@@ -34,7 +40,20 @@ def masked_huber(pred, y, mask):
     return (loss * m).sum() / m.sum().clamp_min(1.0)
 
 
-def run_epoch(model, data, origins, adj, opt=None, bs=64, frac=1.0, station_dropout=0.0):
+def truncate_history(X, keep):
+    """Hide all but the last `keep` hours of PM2.5 (value and observed flag) per sample.
+    X: [B, W, N, F]; keep: int or LongTensor [B]. Calendar features stay (they are always known)."""
+    B, W = X.shape[0], X.shape[1]
+    keep = torch.as_tensor(keep).expand(B) if torch.as_tensor(keep).dim() == 0 else torch.as_tensor(keep)
+    hidden = (torch.arange(W)[None, :] < (W - keep)[:, None]).float()[:, :, None]   # [B, W, 1]
+    X = X.clone()
+    X[..., 0] *= 1 - hidden
+    X[..., 1] *= 1 - hidden
+    return X
+
+
+def run_epoch(model, data, origins, adj, opt=None, bs=64, frac=1.0, station_dropout=0.0,
+              history_dropout=0.0, keep_last=None):
     train = opt is not None
     model.train(train)
     total, count = 0.0, 0
@@ -44,6 +63,13 @@ def run_epoch(model, data, origins, adj, opt=None, bs=64, frac=1.0, station_drop
     with torch.set_grad_enabled(train):
         for i in range(0, len(order), bs):
             X, Y, M = data.batch(order[i:i + bs])
+            if keep_last is not None:
+                X = truncate_history(X, keep_last)
+            if train and history_dropout > 0:
+                short = torch.rand(X.shape[0]) < history_dropout
+                keep = torch.where(short, torch.randint(1, C.INPUT_WINDOW, (X.shape[0],)),
+                                   torch.full((X.shape[0],), C.INPUT_WINDOW))
+                X = truncate_history(X, keep)
             if train and station_dropout > 0:
                 # Hide whole stations' input windows at random so the model learns to
                 # estimate a station from its neighbours when its sensor fails.
@@ -66,18 +92,40 @@ def log_path(name, seed):
     return os.path.join(C.RESULTS_DIR, "train_logs", f"{slug(name)}_seed{seed}.json")
 
 
-def train_one(name, seed, data, epochs, patience, frac, station_dropout=0.0):
+def validate(model, data, history_dropout):
+    """Validation loss on full history; when training for short history, averaged with the
+    loss when only the current hour is available."""
+    full = run_epoch(model, data, data.splits["val"], data.adj, bs=256)
+    if history_dropout <= 0:
+        return full
+    short = run_epoch(model, data, data.splits["val"], data.adj, bs=256, keep_last=1)
+    return 0.5 * (full + short)
+
+
+def train_one(name, seed, data, epochs, patience, frac, station_dropout=0.0,
+              history_dropout=0.0, finetune=False):
     torch.manual_seed(seed)
     np.random.seed(seed)
     model = build_model(name, data.n_nodes, len(C.HORIZONS), window=C.INPUT_WINDOW)
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    lr = 1e-3
+    best = float("inf")
+    if finetune:
+        path = ckpt_path(name, seed)
+        backup = path.replace(".pt", "_fullhist.pt")
+        if not os.path.exists(backup):
+            shutil.copyfile(path, backup)            # keep the original full-history model
+        model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+        lr = 3e-4
+        best = validate(model, data, history_dropout)  # only save if fine-tuning beats this
+        print(f"  [{name} s{seed}] starting from {os.path.basename(path)}: val {best:.4f}", flush=True)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=2)
-    best, bad, hist = float("inf"), 0, {"train": [], "val": []}
+    bad, hist = 0, {"train": [], "val": []}
     t0 = time.time()
     for ep in range(1, epochs + 1):
         tr = run_epoch(model, data, data.splits["train"], data.adj, opt, frac=frac,
-                       station_dropout=station_dropout)
-        va = run_epoch(model, data, data.splits["val"], data.adj, bs=256)
+                       station_dropout=station_dropout, history_dropout=history_dropout)
+        va = validate(model, data, history_dropout)
         sched.step(va)
         hist["train"].append(tr)
         hist["val"].append(va)
@@ -91,7 +139,8 @@ def train_one(name, seed, data, epochs, patience, frac, station_dropout=0.0):
               f"({time.time() - t0:.0f}s){flag}", flush=True)
         if bad >= patience:
             break
-    return {"station_dropout": station_dropout, "best_val": best, "epochs": len(hist["train"]), "seconds": round(time.time() - t0, 1),
+    return {"station_dropout": station_dropout, "history_dropout": history_dropout,
+            "finetuned": finetune, "best_val": best, "epochs": len(hist["train"]), "seconds": round(time.time() - t0, 1),
             "params": count_params(model), "history": hist}
 
 
@@ -105,6 +154,10 @@ def main():
     ap.add_argument("--station-dropout", type=float, default=None,
                     help="override: probability of hiding a station's whole input window during "
                          "training (default: 0.15 for 'Robust ...' models, else 0)")
+    ap.add_argument("--history-dropout", type=float, default=0.0,
+                    help="probability that a training sample keeps only its last 1-23 input hours")
+    ap.add_argument("--finetune", action="store_true",
+                    help="continue from the existing checkpoint (lr 3e-4) instead of training from scratch")
     ap.add_argument("--models", nargs="+", default=list(MODEL_CLASSES))
     ap.add_argument("--eval-only", action="store_true")
     ap.add_argument("--no-eval", action="store_true")
@@ -123,7 +176,8 @@ def main():
                 print(f"\n=== {name} | seed {seed} ===", flush=True)
                 res = train_one(name, seed, data, args.epochs, args.patience, args.train_frac,
                                 args.station_dropout if args.station_dropout is not None
-                                else STATION_DROPOUT.get(name, 0.0))
+                                else STATION_DROPOUT.get(name, 0.0),
+                                args.history_dropout, args.finetune)
                 with open(log_path(name, seed), "w") as f:
                     json.dump(res, f, indent=1)
     if not args.no_eval:

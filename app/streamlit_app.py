@@ -1,13 +1,13 @@
 """
-Delhi PM2.5 Forecaster — interactive demo.
+Delhi PM2.5 Forecaster — live demo.
 
 Run from the project root:
-    streamlit run app/streamlit_app.py
+    python -m streamlit run app/streamlit_app.py
+Live data needs WAQI_TOKEN in .env; keep `python src/live.py --loop` running to build up history.
 """
 import json
 import os
 import sys
-from datetime import datetime, time as dtime
 
 import numpy as np
 import pandas as pd
@@ -18,32 +18,46 @@ import torch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(ROOT, "src"))
+# Live forecasts use the final models (trained on all data up to Sep 2026) once they exist; the
+# "How good is the model?" tab always shows the evaluated (hold-out) models' test results.
+if "AQI_RUN" not in os.environ and os.path.exists(os.path.join(ROOT, "results", "final", "best_seeds.json")):
+    os.environ["AQI_RUN"] = "final"
 
 import config as C  # noqa: E402
 from data import AQIData  # noqa: E402
-from models import MODEL_CLASSES, Persistence, SeasonalNaive, build_model, slug  # noqa: E402
+from models import MODEL_CLASSES, Persistence, build_model, slug  # noqa: E402
+import live as L  # noqa: E402
 
 st.set_page_config(page_title="Delhi PM2.5 Forecaster", page_icon="🌫️", layout="wide")
 
 MODEL_COLORS = {
     "Persistence": "#9CA3AF", "Seasonal naive": "#C4B5FD", "LSTM": "#3B82F6",
     "Transformer": "#F59E0B", "GAT-Transformer": "#10B981",
-    "Robust LSTM": "#1E3A8A", "Robust GAT-Transformer": "#047857",
+    "Robust LSTM": "#1E3A8A", "Robust GAT-Transformer": "#047857", "Ensemble": "#7C3AED",
 }
-NEURAL = list(MODEL_CLASSES)
 BAND_COLORS = {name: color for _, _, name, color in C.AQI_BANDS}
 
 
 # ----------------------------------------------------------------------------- loading
-@st.cache_resource(show_spinner="Loading data and models…")
-def load_all():
+def _version(*paths):
+    """Changes whenever any of the files/folders change, so cached data is reloaded automatically."""
+    out = []
+    for p in paths:
+        if os.path.isdir(p):
+            out += [os.path.getmtime(os.path.join(p, f)) for f in sorted(os.listdir(p))]
+        elif os.path.exists(p):
+            out.append(os.path.getmtime(p))
+    return tuple(out)
+
+
+@st.cache_resource(show_spinner="Loading models…")
+def load_all(_version):
     data = AQIData()
     best_path = os.path.join(C.RESULTS_DIR, "best_seeds.json")
     best = json.load(open(best_path)) if os.path.exists(best_path) else {}
     models = {}
-    for name in NEURAL:
-        seed = best.get(name, "0")
-        path = os.path.join(C.CHECKPOINTS_DIR, f"{slug(name)}_seed{seed}.pt")
+    for name in MODEL_CLASSES:
+        path = os.path.join(C.CHECKPOINTS_DIR, f"{slug(name)}_seed{best.get(name, '0')}.pt")
         if os.path.exists(path):
             m = build_model(name, data.n_nodes, len(C.HORIZONS), window=C.INPUT_WINDOW)
             m.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
@@ -52,18 +66,14 @@ def load_all():
 
 
 @st.cache_data
-def load_results():
+def load_results(_version):
     def rd(name):
-        p = os.path.join(C.RESULTS_DIR, name)
+        p = os.path.join(C.HOLDOUT_RESULTS_DIR, name)
         return pd.read_csv(p) if os.path.exists(p) else None
-    out = {k: rd(f"{k}.csv") for k in
-           ["metrics_overall", "metrics_horizon", "metrics_season", "metrics_station", "dm_test"]}
-    p = os.path.join(C.RESULTS_DIR, "test_predictions.npz")
-    if os.path.exists(p):
-        z = np.load(p)
-        out["pred_origins"], out["pred_names"], out["preds"] = z["origins"], list(z["names"]), z["preds"]
+    out = {k: rd(f"{k}.csv") for k in ["metrics_overall", "metrics_horizon", "metrics_season",
+                                         "metrics_station", "dm_test", "sensor_failure"]}
     logs = {}
-    log_dir = os.path.join(C.RESULTS_DIR, "train_logs")
+    log_dir = os.path.join(C.HOLDOUT_RESULTS_DIR, "train_logs")
     if os.path.isdir(log_dir):
         for fn in sorted(os.listdir(log_dir)):
             with open(os.path.join(log_dir, fn)) as f:
@@ -72,44 +82,14 @@ def load_results():
     return out
 
 
-data, models = load_all()
-res = load_results()
+data, models = load_all(_version(C.DATASET_NPZ, C.CHECKPOINTS_DIR, C.STATIONS_CSV))
+res = load_results(_version(C.HOLDOUT_RESULTS_DIR, os.path.join(C.HOLDOUT_RESULTS_DIR, "train_logs")))
 stations = data.stations
 names = stations["name"].tolist()
-T = len(data.times)
-t_index = pd.Series(np.arange(T), index=data.times)
-TRAIN_END, VAL_END = pd.Timestamp(C.TRAIN_END), pd.Timestamp(C.VAL_END)
-
-
-def period_of(ts):
-    if ts <= TRAIN_END:
-        return "Training period", "the models saw this data during training"
-    if ts <= VAL_END:
-        return "Validation period", "used only for early stopping"
-    return "Test period", "never seen by the models — a genuine out-of-sample forecast"
 
 
 def aqi_color(v):
     return BAND_COLORS[C.aqi_category(v)] if np.isfinite(v) else "#D1D5DB"
-
-
-@torch.no_grad()
-def forecast_at(t, hide=None):
-    """Run every model on the 24h window ending at hour t. Returns {model: [H, N]}, attention.
-    hide: station index whose sensor is simulated as failed (its readings are hidden)."""
-    X = data.features[t - C.INPUT_WINDOW + 1: t + 1].unsqueeze(0)
-    if hide is not None:
-        X = data.hide_stations(X, [hide])
-    out = {"Persistence": Persistence(C.HORIZONS)(X), "Seasonal naive": SeasonalNaive(C.HORIZONS)(X)}
-    attn = {}
-    for name, m in models.items():
-        if "GAT" in name:
-            out[name], a = m(X, data.adj, return_attn=True)
-            attn[name] = a[0].numpy()
-        else:
-            out[name] = m(X, data.adj)
-    out = {k: data.denorm(v.numpy()[0]) for k, v in out.items()}
-    return out, attn
 
 
 def add_aqi_bands(fig, ymax):
@@ -121,9 +101,28 @@ def add_aqi_bands(fig, ymax):
                       annotation_font_size=10, annotation_font_color="#6B7280")
 
 
+@torch.no_grad()
+def live_forecast(readings, end, hide=None):
+    """Run every model on the live 24 h window ending at `end`.
+    hide: station index whose sensor is simulated as failed. Returns ({model: [H, N]}, attention)."""
+    X, _ = L.build_window(readings, data, end)
+    if hide is not None:
+        X = data.hide_stations(X, [hide])
+    out = {"Persistence": data.denorm(Persistence(C.HORIZONS)(X).numpy()[0])}
+    attn = {}
+    for name, m in models.items():
+        if "GAT" in name:
+            y, a = m(X, data.adj, return_attn=True)
+            attn[name] = a[0].numpy()
+        else:
+            y = m(X, data.adj)
+        out[name] = data.denorm(y.numpy()[0])
+    return L.add_ensemble(out), attn
+
+
 # ----------------------------------------------------------------------------- sidebar
 # A click on the map selects a station (handled before the selectbox is drawn).
-ev = st.session_state.get("station_map")
+ev = st.session_state.get("today_map")
 if ev and ev.get("selection", {}).get("points"):
     picked = ev["selection"]["points"][0]["customdata"][0]
     if picked != st.session_state.get("_last_map_pick"):
@@ -133,21 +132,19 @@ st.session_state.setdefault("station", "Anand Vihar")
 
 with st.sidebar:
     st.title("🌫️ Delhi PM2.5 Forecaster")
-    st.caption(f"{len(stations)} CPCB/DPCC/IMD monitoring stations · real hourly data "
-               f"{data.times[0]:%b %Y} – {data.times[-1]:%b %Y}")
+    st.caption(f"{len(stations)} Delhi monitoring stations · live data via the World Air Quality Index project · "
+               + ("live forecasts by the final models, trained on Jan 2023 – Jun 2026" if C.RUN == "final" else
+                  "live forecasts by the evaluated models, trained on Jan 2023 – Jun 2024"))
     station = st.selectbox("Station", names, key="station")
     sidx = names.index(station)
-    st.markdown("**Forecast moment**")
-    d = st.date_input("Date", value=datetime(2024, 11, 18).date(),
-                      min_value=data.times[C.INPUT_WINDOW].date(), max_value=data.times[-1].date())
-    hr = st.slider("Hour (IST)", 0, 23, 8)
     failed = st.toggle("🔌 Simulate sensor failure", key="failed",
-                       help="Hide this station's last 24 hours of readings from every model, as if "
-                            "its sensor were broken. Models that only look at the station itself are "
-                            "left guessing; the GAT models can still use neighbouring stations.")
-    default_models = (["LSTM", "GAT-Transformer", "Robust GAT-Transformer"] if failed
-                      else ["Persistence", "LSTM", "GAT-Transformer"])
-    available = [m for m in MODEL_COLORS if m in ("Persistence", "Seasonal naive") or m in models]
+                       help="Hide this station's own live readings from every model, as if its sensor "
+                            "were broken. Models that only look at the station itself are left guessing; "
+                            "the GAT models can still use neighbouring stations.")
+    default_models = (["Persistence", "LSTM", "Robust GAT-Transformer"] if failed
+                      else ["Persistence", "LSTM", "GAT-Transformer", "Ensemble"])
+    available = ["Persistence"] + [m for m in MODEL_COLORS if m in models] + (
+        ["Ensemble"] if all(m in models for m in L.ENSEMBLE_MEMBERS) else [])
     # Keyed on `failed` so the selection resets to sensible defaults when the toggle flips.
     shown = st.multiselect("Models to show", available, key=f"shown_{failed}",
                            default=[m for m in default_models if m in available])
@@ -156,200 +153,161 @@ with st.sidebar:
     if not models:
         st.error("No trained checkpoints found — run `python src/train_eval.py` first.")
 
-ts = pd.Timestamp(datetime.combine(d, dtime(hr)))
-t = int(t_index[ts])
-window_obs = data.observed[t - C.INPUT_WINDOW + 1: t + 1].mean()
+tab_today, tab_cmp, tab_about = st.tabs(["📡 Today (live)", "🏆 How good is the model?", "ℹ️ About"])
 
-tab_live, tab_bt, tab_cmp, tab_exp, tab_about = st.tabs(
-    ["🗺️ Live map & forecast", "📈 Backtest", "🏆 Model comparison", "🔎 Station explorer", "ℹ️ About"])
+# ----------------------------------------------------------------------------- today (live)
+with tab_today:
+    token = L.load_token()
+    if not token:
+        st.info("Live mode needs a free WAQI token: get one at aqicn.org/data-platform/token and add "
+                "`WAQI_TOKEN=...` to the `.env` file in the project folder.")
+        st.stop()
 
-# ----------------------------------------------------------------------------- live
-with tab_live:
-    per, why = period_of(ts)
-    badge = {"Test period": "🟢", "Validation period": "🟡", "Training period": "🟠"}[per]
-    st.markdown(f"#### {station} — forecast issued at {ts:%d %b %Y, %H:00}  \n"
-                f"{badge} **{per}**: {why}.")
+    head, btn = st.columns([5, 1])
+    stale = (not os.path.exists(L.READINGS_CSV) or
+             pd.Timestamp.now().timestamp() - os.path.getmtime(L.READINGS_CSV) > 20 * 60)
+    if btn.button("🔄 Fetch now", width="stretch") or stale:
+        with st.spinner("Fetching live readings from Delhi's stations…"):
+            try:
+                L.collect(data, models, token)
+            except Exception as e:
+                st.warning(f"Could not fetch live data right now ({e}). Showing the last saved readings.")
+    readings, fcs = L.load_readings(), L.load_forecasts()
+    if readings.empty:
+        st.warning("No live readings yet — press “Fetch now”.")
+        st.stop()
 
-    if window_obs < 0.5:
-        st.warning("The monitoring network reported almost no data in the 24 hours before this "
-                   "moment (the source has a network-wide gap in Jan–Mar 2025). Pick another date.")
-    else:
-        fc, attn_all = forecast_at(t, sidx if failed else None)
-        attn_model = "Robust GAT-Transformer" if failed and "Robust GAT-Transformer" in attn_all             else "GAT-Transformer"
-        attn = attn_all.get(attn_model)
-        if failed:
-            st.error(f"🔌 **Sensor failure simulated at {station}.** None of the models can see this "
-                     f"station's readings from the last 24 hours. The real values are still drawn "
-                     f"(grey) so you can judge who guessed best. With no data of its own, "
-                     f"*Persistence* falls back to the station's long-term average.")
-        now = data.pm25[t]
-        last24 = np.nanmean(data.pm25[t - 23: t + 1], axis=0)
+    latest = readings["time"].max()
+    recent = readings[readings["time"] >= latest - pd.Timedelta(hours=2)]
+    now_by_station = recent.sort_values("time").groupby("station_id")["pm25"].last()
+    now_vals = stations["station_id"].map(now_by_station).values.astype(float)
+    hours_have = readings.loc[readings["time"] > latest - pd.Timedelta(hours=C.INPUT_WINDOW), "time"].nunique()
+    head.markdown(f"#### Delhi right now — {latest:%d %b %Y, %H:00} IST  \n"
+                  f"Live CPCB/DPCC readings · **{int(np.isfinite(now_vals).sum())} of {len(stations)} "
+                  f"stations reporting** · history collected: **{hours_have} of 24 hours**")
+    if hours_have < C.INPUT_WINDOW:
+        st.info(f"Forecasting from {hours_have} h of collected history (the models were built for 24 h). "
+                f"They still work from just the current readings — in tests, error is about 12% higher with "
+                f"one hour of history than with a full day, and still ~15% better than persistence. "
+                f"Keep `python src/live.py --loop` running and forecasts sharpen as history builds up.")
 
-        col_map, col_card = st.columns([3, 2], gap="large")
-        with col_map:
-            map_metric = st.radio("Colour stations by", ["Observed now", "GAT-Transformer +6h forecast",
-                                                         "GAT-Transformer +24h forecast"],
-                                  horizontal=True, label_visibility="collapsed")
-            if map_metric == "Observed now":
-                vals = now
-            else:
-                h = 6 if "+6h" in map_metric else 24
-                src = fc.get("GAT-Transformer", fc["Persistence"])
-                vals = src[C.HORIZONS.index(h)]
-            mdf = stations.assign(pm25=np.round(vals, 1),
-                                  category=[C.aqi_category(v) if np.isfinite(v) else "No data" for v in vals],
-                                  selected=[n == station for n in names])
-            mdf["size"] = np.where(mdf["selected"], 22, 13)
-            fig = px.scatter_map(
-                mdf, lat="lat", lon="lon", color="category", size="size", size_max=22,
-                color_discrete_map={**BAND_COLORS, "No data": "#D1D5DB"},
-                category_orders={"category": [b[2] for b in C.AQI_BANDS] + ["No data"]},
-                custom_data=["name", "pm25"], hover_name="name",
-                hover_data={"pm25": True, "category": True, "lat": False, "lon": False, "size": False},
-                zoom=9.4, center={"lat": 28.65, "lon": 77.17}, height=520, map_style="carto-positron")
-            sel = mdf[mdf["selected"]].iloc[0]
-            fig.add_trace(go.Scattermap(lat=[sel.lat], lon=[sel.lon], mode="markers",
-                                        marker=dict(size=30, color="rgba(0,0,0,0)"),
-                                        hoverinfo="skip", showlegend=False))
-            fig.add_trace(go.Scattermap(lat=[sel.lat], lon=[sel.lon], mode="text", text=["▼ " + station],
-                                        textposition="top center", textfont=dict(size=13, color="#111827"),
-                                        hoverinfo="skip", showlegend=False))
-            fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), legend_title_text="AQI category",
-                              legend=dict(orientation="h", y=-0.02))
-            st.plotly_chart(fig, width="stretch", key="station_map", on_select="rerun",
-                            selection_mode="points")
+    fc, attn = live_forecast(readings, latest, hide=sidx if failed else None)
+    if failed:
+        st.error(f"🔌 **Sensor failure simulated at {station}.** No model can see this station's own "
+                 f"readings; they must work it out from neighbouring stations. (With no data of its own, "
+                 f"*Persistence* falls back to the station's long-term average.)")
 
-        with col_card:
-            cur = now[sidx]
-            cat = C.aqi_category(cur) if np.isfinite(cur) else "No data"
-            st.markdown(
-                f"<div style='border-radius:12px;padding:16px 18px;background:{aqi_color(cur)}22;"
-                f"border-left:6px solid {aqi_color(cur)}'>"
-                f"<div style='font-size:13px;color:#6B7280'>Observed PM2.5 at {ts:%H:00}"
-                f"{' — hidden from models' if failed else ''}</div>"
-                f"<div style='font-size:40px;font-weight:700'>"
-                f"{'—' if not np.isfinite(cur) else f'{cur:.0f}'}"
-                f" <span style='font-size:16px;font-weight:400'>µg/m³</span></div>"
-                f"<div style='font-size:16px;font-weight:600'>{cat}</div>"
-                f"<div style='font-size:13px;color:#6B7280'>24-hour average: {last24[sidx]:.0f} µg/m³ · "
-                f"city rank {int((np.nan_to_num(now, nan=-1) > np.nan_to_num(cur, nan=-1)).sum()) + 1}"
-                f" of {len(names)}</div></div>", unsafe_allow_html=True)
+    col_m, col_c = st.columns([3, 2], gap="large")
+    with col_m:
+        tdf = stations.assign(
+            pm25=np.round(now_vals, 0),
+            category=[C.aqi_category(v) if np.isfinite(v) else "Offline" for v in now_vals],
+            selected=[n == station for n in names])
+        tdf["size"] = np.where(tdf["selected"], 22, 13)
+        fig = px.scatter_map(
+            tdf, lat="lat", lon="lon", color="category", size="size", size_max=22,
+            color_discrete_map={**BAND_COLORS, "Offline": "#D1D5DB"},
+            category_orders={"category": [b[2] for b in C.AQI_BANDS] + ["Offline"]},
+            custom_data=["name", "pm25"], hover_name="name",
+            hover_data={"pm25": True, "category": True, "lat": False, "lon": False, "size": False},
+            zoom=9.4, center={"lat": 28.65, "lon": 77.17}, height=500, map_style="carto-positron")
+        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), legend_title_text="AQI category",
+                          legend=dict(orientation="h", y=-0.02))
+        st.plotly_chart(fig, width="stretch", key="today_map", on_select="rerun", selection_mode="points")
 
-            rows = []
-            for hi, h in enumerate(C.HORIZONS):
-                tt = t + h
-                actual = data.pm25[tt, sidx] if tt < T else np.nan
-                row = {"Lead": f"+{h}h", "Time": data.times[tt].strftime("%d %b %H:00") if tt < T else "—"}
-                for name in shown:
-                    if name in fc:
-                        row[name] = round(float(fc[name][hi, sidx]), 0)
-                row["Actual"] = None if not np.isfinite(actual) else round(float(actual), 0)
-                rows.append(row)
-            st.markdown("**Forecasts (µg/m³)**")
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    with col_c:
+        cur = now_vals[sidx]
+        st.markdown(
+            f"<div style='border-radius:12px;padding:16px 18px;background:{aqi_color(cur)}22;"
+            f"border-left:6px solid {aqi_color(cur)}'>"
+            f"<div style='font-size:13px;color:#6B7280'>{station} — PM2.5 now"
+            f"{' (hidden from models)' if failed else ''}</div>"
+            f"<div style='font-size:40px;font-weight:700'>{'—' if not np.isfinite(cur) else f'{cur:.0f}'}"
+            f" <span style='font-size:16px;font-weight:400'>µg/m³</span></div>"
+            f"<div style='font-size:16px;font-weight:600'>"
+            f"{C.aqi_category(cur) if np.isfinite(cur) else 'Station offline'}</div></div>",
+            unsafe_allow_html=True)
+        rows = []
+        for hi, h in enumerate(C.HORIZONS):
+            row = {"Lead": f"+{h}h", "Time": f"{latest + pd.Timedelta(hours=h):%d %b %H:00}"}
+            row.update({n: round(float(fc[n][hi, sidx])) for n in shown if n in fc})
+            rows.append(row)
+        st.markdown(f"**Forecast from {latest:%H:00} (µg/m³)**")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        if not np.isfinite(cur) and not failed:
+            st.caption("This station is offline right now: its forecast comes from neighbouring stations "
+                       "(the Robust GAT-Transformer is built for exactly this).")
 
-        # Forecast chart: 48h history + forecasts + what actually happened.
-        lo, hi_t = max(0, t - 47), min(T - 1, t + max(C.HORIZONS))
-        hist_t = data.times[lo: t + 1]
-        fut_t = data.times[t + 1: hi_t + 1]
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=hist_t, y=data.pm25[lo: t + 1, sidx],
-                                 name="Observed (hidden from models)" if failed else "Observed",
-                                 line=dict(color="#9CA3AF" if failed else "#111827", width=2.5)))
-        fig.add_trace(go.Scatter(x=fut_t, y=data.pm25[t + 1: hi_t + 1, sidx], name="Actual (what happened)",
-                                 line=dict(color="#111827", width=2, dash="dot")))
-        for name in shown:
-            if name not in fc:
-                continue
-            xs = [data.times[t] + pd.Timedelta(hours=h) for h in C.HORIZONS]
-            ys = list(fc[name][:, sidx])
-            if not failed and np.isfinite(data.pm25[t, sidx]):   # connect to the last observation
-                xs, ys = [data.times[t]] + xs, [data.pm25[t, sidx]] + ys
-            fig.add_trace(go.Scatter(x=xs, y=ys, name=name, mode="lines+markers",
-                                     line=dict(color=MODEL_COLORS[name], width=2.5 if "GAT" in name else 1.8),
-                                     marker=dict(size=7)))
-        ymax = np.nanmax([np.nanmax(data.pm25[lo: hi_t + 1, sidx])] +
-                         [fc[n][:, sidx].max() for n in shown if n in fc]) * 1.15
-        add_aqi_bands(fig, ymax)
-        fig.add_vline(x=data.times[t], line_dash="dash", line_color="#6B7280")
-        fig.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10), yaxis_title="PM2.5 (µg/m³)",
-                          yaxis_range=[0, ymax], hovermode="x unified",
-                          title=dict(text="Past 48 h and next 24 h", font_size=15),
-                          legend=dict(orientation="h", y=1.12))
+    # Live readings + the next 24 hours.
+    st_read = readings[readings["station_id"] == stations["station_id"].iloc[sidx]].sort_values("time")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=st_read["time"], y=st_read["pm25"], mode="lines+markers",
+                             name="Observed (hidden from models)" if failed else "Observed (live)",
+                             line=dict(color="#9CA3AF" if failed else "#111827", width=2.5)))
+    for name in [n for n in shown if n in fc]:
+        fig.add_trace(go.Scatter(x=[latest + pd.Timedelta(hours=h) for h in C.HORIZONS],
+                                 y=fc[name][:, sidx], name=name, mode="lines+markers",
+                                 line=dict(color=MODEL_COLORS.get(name), width=2.5 if "GAT" in name else 1.8)))
+    yvals = list(st_read["pm25"].dropna()) + [float(fc[n][:, sidx].max()) for n in shown if n in fc]
+    ymax = max(yvals) * 1.15 if yvals else 300
+    add_aqi_bands(fig, ymax)
+    fig.add_vline(x=latest, line_dash="dash", line_color="#6B7280")
+    fig.update_layout(height=400, yaxis_title="PM2.5 (µg/m³)", yaxis_range=[0, ymax], hovermode="x unified",
+                      margin=dict(l=10, r=10, t=30, b=10), legend=dict(orientation="h", y=1.12),
+                      title=dict(text=f"{station}: live readings and the next 24 hours", font_size=15))
+    st.plotly_chart(fig, width="stretch")
+
+    # Live sensor-failure check: estimate the current hour without the station's own data.
+    if failed:
+        prev_end = latest - pd.Timedelta(hours=1)
+        if not np.isfinite(cur) or readings["time"].min() > prev_end:
+            st.caption("Live check unavailable: needs this station's current reading and at least one "
+                       "earlier hour of data.")
+        else:
+            fc_prev, _ = live_forecast(readings[readings["time"] <= prev_end], prev_end, hide=sidx)
+            chk = pd.DataFrame([{"Model": n, "Estimate for now (µg/m³)": round(float(fc_prev[n][0, sidx])),
+                                 "Error vs real reading": round(abs(float(fc_prev[n][0, sidx]) - cur))}
+                                for n in fc_prev if n in shown or "GAT" in n]).sort_values("Error vs real reading")
+            st.markdown(f"**Live sensor-failure check.** Pretend {station}'s sensor broke an hour ago: "
+                        f"each model estimates the value for {latest:%H:00} without any of the station's own "
+                        f"data. The real reading is **{cur:.0f} µg/m³**.")
+            st.dataframe(chk, hide_index=True, width="stretch")
+
+    attn_model = "Robust GAT-Transformer" if failed and "Robust GAT-Transformer" in attn else "GAT-Transformer"
+    if attn_model in attn:
+        st.markdown(f"**Which neighbouring stations is the {attn_model} listening to right now?** "
+                    f"Graph-attention weights for {station}.")
+        w = attn[attn_model][sidx]
+        nb = np.where(w > 0.005)[0]
+        adf = pd.DataFrame({"Station": [names[j] + (" (itself)" if j == sidx else "") for j in nb],
+                            "Attention": w[nb], "Distance (km)": data.dist[sidx, nb].round(1),
+                            "PM2.5 now": np.round(now_vals[nb], 0)}).sort_values("Attention")
+        fig = px.bar(adf, x="Attention", y="Station", orientation="h",
+                     hover_data=["Distance (km)", "PM2.5 now"], color_discrete_sequence=["#10B981"])
+        fig.update_layout(height=max(220, 28 * len(adf)), margin=dict(l=10, r=10, t=10, b=10),
+                          xaxis_tickformat=".0%")
         st.plotly_chart(fig, width="stretch")
 
-        if attn is not None:
-            st.markdown(f"**Which neighbouring stations did the {attn_model} listen to?**  "
-                        "Graph-attention weights for this station at this moment "
-                        "(they change with the pollution situation).")
-            w = attn[sidx]
-            nb = np.where(w > 0.005)[0]
-            adf = pd.DataFrame({"Station": [names[j] + (" (itself)" if j == sidx else "") for j in nb],
-                                "Attention": w[nb], "Distance (km)": data.dist[sidx, nb].round(1),
-                                "PM2.5 now": np.round(now[nb], 0)}).sort_values("Attention")
-            fig = px.bar(adf, x="Attention", y="Station", orientation="h",
-                         hover_data=["Distance (km)", "PM2.5 now"], color_discrete_sequence=["#10B981"])
-            fig.update_layout(height=max(220, 28 * len(adf)), margin=dict(l=10, r=10, t=10, b=10),
-                              xaxis_tickformat=".0%")
-            st.plotly_chart(fig, width="stretch")
-
-# ----------------------------------------------------------------------------- backtest
-with tab_bt:
-    if "preds" not in res:
-        st.info("Run the evaluation (`python src/train_eval.py --eval-only`) to enable backtesting.")
+    st.markdown("**How accurate have the live forecasts been?**  Every hour each model's forecast is saved; "
+                "once the target hour arrives it is scored against the real reading. A +1h forecast is "
+                "scored an hour later, +6h after six hours, and so on.")
+    sc = L.live_scores(readings, fcs)
+    if sc.empty:
+        st.caption("Nothing to score yet — the first forecast reaches its target hour (+1h) within an hour.")
     else:
-        po = res["pred_origins"]
-        pt = data.times[po]
-        st.markdown(f"#### {station}: forecasts vs reality over the unseen test period")
-        c1, c2, c3 = st.columns([2, 1, 2])
-        with c1:
-            rng = st.date_input("Date range", value=(datetime(2024, 11, 1).date(),
-                                                      datetime(2024, 11, 30).date()),
-                                min_value=pt[0].date(), max_value=pt[-1].date())
-        with c2:
-            h = st.selectbox("Lead time", C.HORIZONS, index=2, format_func=lambda x: f"+{x} h")
-        with c3:
-            bt_models = st.multiselect("Models", res["pred_names"],
-                                       default=[m for m in ["Persistence", "LSTM", "GAT-Transformer"]
-                                                if m in res["pred_names"]], key="bt_models")
-        if isinstance(rng, tuple) and len(rng) == 2:
-            hi_ = C.HORIZONS.index(h)
-            valid_t = pt + pd.Timedelta(hours=h)
-            sel = (valid_t >= pd.Timestamp(rng[0])) & (valid_t < pd.Timestamp(rng[1]) + pd.Timedelta(days=1))
-            if sel.sum() == 0:
-                st.warning("No test forecasts in this range (Jan–Mar 2025 has no source data).")
-            else:
-                actual = data.pm25[po[sel] + h, sidx]
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=valid_t[sel], y=actual, name="Actual",
-                                         line=dict(color="#111827", width=2)))
-                mrows = []
-                for name in bt_models:
-                    p = res["preds"][res["pred_names"].index(name)][sel, hi_, sidx]
-                    fig.add_trace(go.Scatter(x=valid_t[sel], y=p, name=name,
-                                             line=dict(color=MODEL_COLORS[name], width=1.6)))
-                    ok = np.isfinite(actual)
-                    err = p[ok] - actual[ok]
-                    mrows.append({"Model": name, "MAE": np.abs(err).mean(),
-                                  "RMSE": np.sqrt((err ** 2).mean()), "Bias": err.mean()})
-                ymax = np.nanmax(actual) * 1.15
-                add_aqi_bands(fig, ymax)
-                fig.update_layout(height=460, yaxis_title="PM2.5 (µg/m³)", hovermode="x unified",
-                                  yaxis_range=[0, ymax], margin=dict(l=10, r=10, t=30, b=10),
-                                  title=dict(text=f"+{h} h ahead forecasts", font_size=15),
-                                  legend=dict(orientation="h", y=1.1))
-                st.plotly_chart(fig, width="stretch")
-                st.markdown("**Error for this station and date range (µg/m³)**")
-                st.dataframe(pd.DataFrame(mrows).round(2).sort_values("MAE"), hide_index=True)
+        piv = sc.pivot(index="model", columns="horizon", values="MAE").round(1)
+        piv.columns = [f"+{h}h MAE" for h in piv.columns]
+        piv["forecasts scored"] = sc.groupby("model")["n"].sum()
+        st.dataframe(piv.sort_values(piv.columns[0]), width="stretch")
 
-# ----------------------------------------------------------------------------- comparison
+# ----------------------------------------------------------------------------- how good is the model
 with tab_cmp:
     ov = res.get("metrics_overall")
     if ov is None:
         st.info("Run the evaluation to see model comparison.")
     else:
-        st.markdown("#### Test-set accuracy — all 36 stations, real observations only")
-        st.caption("Test period: Oct–Dec 2024 (winter smog) and Apr–Aug 2025 (summer/monsoon). "
+        st.markdown("#### Accuracy on two years the models never saw — all 36 stations")
+        st.caption("Test period: Oct 2024 – Sep 2026 (incl. two winters), real observations only. "
                    "Neural models: mean ± std over 3 random seeds.")
         best = ov.loc[ov["MAE_mean"].idxmin()]
         k = st.columns(4)
@@ -377,13 +335,12 @@ with tab_cmp:
             ss = res["metrics_season"]
             fig = px.bar(ss, x="Subset", y="MAE_mean", color="Model", barmode="group",
                          error_y="MAE_std", color_discrete_map=MODEL_COLORS)
-            fig.update_layout(title="MAE by season / episode", yaxis_title="MAE (µg/m³)",
+            fig.update_layout(title="MAE by period / season", yaxis_title="MAE (µg/m³)",
                               xaxis_title=None, height=380, margin=dict(l=10, r=10, t=40, b=10))
             st.plotly_chart(fig, width="stretch")
 
-        sf_path = os.path.join(C.RESULTS_DIR, "sensor_failure.csv")
-        if os.path.exists(sf_path):
-            sf = pd.read_csv(sf_path)
+        sf = res.get("sensor_failure")
+        if sf is not None:
             st.markdown("**Sensor-failure test** — each station's own readings hidden in turn; "
                         "the model must forecast it from neighbouring stations only.")
             c1, c2 = st.columns([3, 2])
@@ -422,8 +379,7 @@ with tab_cmp:
         with c1:
             fig = px.scatter_map(sdf, lat="lat", lon="lon", color="MAE", size="MAE", hover_name="name",
                                  color_continuous_scale="Viridis_r", zoom=9.2,
-                                 center={"lat": 28.65, "lon": 77.17}, height=420,
-                                 map_style="carto-positron")
+                                 center={"lat": 28.65, "lon": 77.17}, height=420, map_style="carto-positron")
             fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig, width="stretch")
         with c2:
@@ -437,72 +393,33 @@ with tab_cmp:
                 for split in ("train", "val"):
                     for ep, v in enumerate(lg["history"][split], 1):
                         rows.append({"run": key, "split": split, "epoch": ep, "loss": v})
-            fig = px.line(pd.DataFrame(rows), x="epoch", y="loss", color="run", line_dash="split",
-                          height=380)
+            fig = px.line(pd.DataFrame(rows), x="epoch", y="loss", color="run", line_dash="split", height=380)
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
             st.plotly_chart(fig, width="stretch")
-
-# ----------------------------------------------------------------------------- explorer
-with tab_exp:
-    s = pd.Series(data.pm25[:, sidx], index=data.times)
-    city = pd.DataFrame(data.pm25, index=data.times).mean(axis=1)
-    info = stations.iloc[sidx]
-    st.markdown(f"#### {station} ({info['agency']}) — {info['lat']:.4f}°N, {info['lon']:.4f}°E")
-    k = st.columns(4)
-    k[0].metric("Average PM2.5 (2023–25)", f"{s.mean():.0f} µg/m³",
-                f"{s.mean() - city.mean():+.0f} vs city", delta_color="inverse")
-    k[1].metric("Worst hour", f"{s.max():.0f} µg/m³", s.idxmax().strftime("%d %b %Y %H:00"),
-                delta_color="off")
-    k[2].metric("Hours ‘Very Poor’ or worse", f"{(s >= 120).mean():.0%}")
-    k[3].metric("Real-data coverage", f"{info['coverage']:.0%}")
-
-    daily = pd.DataFrame({station: s.resample("D").mean(), "Delhi average": city.resample("D").mean()})
-    fig = px.line(daily, height=380, color_discrete_sequence=["#10B981", "#9CA3AF"])
-    fig.update_layout(yaxis_title="Daily mean PM2.5 (µg/m³)", xaxis_title=None, legend_title=None,
-                      margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified")
-    fig.update_xaxes(rangeslider_visible=True)
-    st.plotly_chart(fig, width="stretch")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        monthly = s.groupby(s.index.month).mean()
-        fig = px.bar(x=[pd.Timestamp(2000, m, 1).strftime("%b") for m in monthly.index], y=monthly.values,
-                     color=[C.aqi_category(v) for v in monthly.values], color_discrete_map=BAND_COLORS)
-        fig.update_layout(title="Average by month", yaxis_title="PM2.5 (µg/m³)", xaxis_title=None,
-                          legend_title=None, height=340, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig, width="stretch")
-    with c2:
-        season = np.where(s.index.month.isin([11, 12, 1, 2]), "Winter (Nov–Feb)",
-                          np.where(s.index.month.isin([7, 8, 9]), "Monsoon (Jul–Sep)", "Other months"))
-        diurnal = s.groupby([season, s.index.hour]).mean().rename_axis(["Season", "Hour"]).reset_index(name="PM2.5")
-        fig = px.line(diurnal, x="Hour", y="PM2.5", color="Season", markers=True,
-                      color_discrete_sequence=["#6B7280", "#3B82F6", "#EF4444"])
-        fig.update_layout(title="Daily cycle (hour of day)", yaxis_title="PM2.5 (µg/m³)", height=340,
-                          margin=dict(l=10, r=10, t=40, b=10), legend_title=None)
-        st.plotly_chart(fig, width="stretch")
 
 # ----------------------------------------------------------------------------- about
 with tab_about:
     st.markdown(f"""
 #### How it works
-**Data.** Real hourly PM2.5 from {len(stations)} Delhi monitoring stations (CPCB, DPCC, IMD) via the
-XKDR Air Quality API, Jan 2023 – Aug 2025. No synthetic data. Stuck sensors (≥12 identical hours) and
-non-physical values are removed. Jan–Mar 2025 is missing network-wide in the source and is skipped.
+**Live data.** Current hourly PM2.5 for Delhi's CPCB/DPCC stations from the World Air Quality Index
+project (aqicn.org), converted from its US-EPA AQI values back to µg/m³. Readings are stored every hour;
+each hour every model issues a forecast that is scored once the real reading arrives.
 
-**Split (chronological).** Train Jan 2023 – Jun 2024 · Validation Jul – Sep 2024 ·
-Test Oct – Dec 2024 + Apr – Aug 2025.
+**Training data.** Real hourly PM2.5 from {len(stations)} Delhi monitoring stations (CPCB, DPCC, IMD):
+XKDR Air Quality API (2023 – Aug 2025) and CPCB hourly files (2025 – Sep 2026). Trained on Jan 2023 – Jun 2024,
+validated on Jul – Sep 2024, and tested on Oct 2024 – Sep 2026 — two full years never seen in training.
 
 **No leakage.** Scalers are fitted on training data only; missing inputs are filled *causally*
 (forward-fill only) with an `observed` flag as an extra input; models are trained and scored only on
-real observed targets.
+real observed values.
 
 **Graph.** Each station connects to its {C.KNN} nearest stations; edges weighted by a Gaussian kernel of
 Haversine distance. The GAT uses log(weight) as an attention prior that it can learn to override.
 
-**Models.** Persistence and seasonal-naive baselines; per-station LSTM and Transformer; the proposed
-**GAT-Transformer**: graph attention across stations at every hour → temporal Transformer over 24 h →
-a second graph-attention step → direct multi-horizon head (+1, +3, +6, +12, +24 h). All neural models
-share station embeddings and residual forecasting so the comparison is fair.
+**Models.** Persistence baseline; per-station LSTM and Transformer; the proposed **GAT-Transformer**:
+graph attention across stations at every hour → temporal Transformer over 24 h → a second graph-attention
+step → direct multi-horizon head (+1, +3, +6, +12, +24 h). *Robust* variants are trained with random
+station dropout so they keep working when sensors fail.
 
 **AQI categories** follow the Indian National AQI PM2.5 breakpoints (Good ≤30, Satisfactory ≤60,
 Moderate ≤90, Poor ≤120, Very Poor ≤250, Severe >250 µg/m³).

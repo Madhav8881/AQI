@@ -4,7 +4,7 @@ Phase 5: Evaluate all models on the held-out test period using ONLY real observa
 Outputs (results/):
   metrics_overall.csv   mean ± std over seeds (MAE, RMSE, R², AQI-category accuracy)
   metrics_horizon.csv   per forecast horizon
-  metrics_season.csv    winter smog (Oct-Dec 2024) vs summer/monsoon (Apr-Aug 2025)
+  metrics_season.csv    per test year, 2026 only, winter vs summer, severe episodes
   metrics_station.csv   per station MAE (best seed)
   dm_test.csv           Diebold-Mariano test, GAT-Transformer vs each other model
   test_predictions.npz  test forecasts of every model (best-validation seed), µg/m³
@@ -84,8 +84,14 @@ def main():
     Y, M = data.targets_raw(origins)
     Y = np.nan_to_num(Y)
     times = data.times[origins]
-    seasons = {"Winter smog (Oct-Dec 2024)": times < pd.Timestamp("2025-01-01"),
-               "Summer/Monsoon (Apr-Aug 2025)": times >= pd.Timestamp("2025-01-01")}
+    month = times.month
+    seasons = {
+        "Test year 1 (Oct 2024-Sep 2025)": times < pd.Timestamp("2025-10-01"),
+        "Test year 2 (Oct 2025-Sep 2026)": times >= pd.Timestamp("2025-10-01"),
+        "2026 only (Jan-Sep 2026)": times >= pd.Timestamp("2026-01-01"),
+        "Winter smog (Oct-Feb)": np.isin(month, [10, 11, 12, 1, 2]),
+        "Summer/Monsoon (Apr-Sep)": np.isin(month, [4, 5, 6, 7, 8, 9]),
+    }
     log = load_logs()
 
     # Predictions per model per seed.

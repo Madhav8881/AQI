@@ -92,3 +92,5 @@ tmp/
 # ------------------------------------------------------------------------------
 data/raw/stations/
 results/run_logs/
+data/raw/kaggle_cpcb/
+data/live/

@@ -40,12 +40,16 @@ def flatline_mask(df, min_run=12):
 
 def main():
     print("=" * 70)
-    print(" Phase 2: Preprocessing real Delhi PM2.5 data (2023-01 .. 2025-08)")
+    print(f" Phase 2: Preprocessing real Delhi PM2.5 data ({C.START[:7]} .. {C.END[:7]})")
     print("=" * 70)
     os.makedirs(C.PROCESSED_DIR, exist_ok=True)
 
-    raw = pd.read_csv(C.RAW_CSV)
-    raw["t"] = pd.to_datetime(raw["collected_at"]).dt.floor("h")
+    # XKDR first, then CPCB files; where both have an hour (identical values) keep XKDR.
+    sources = [pd.read_csv(C.RAW_CSV)]
+    if os.path.exists(C.RAW_CSV_CPCB):
+        sources.append(pd.read_csv(C.RAW_CSV_CPCB))
+    raw = pd.concat(sources, ignore_index=True)
+    raw["t"] = pd.to_datetime(raw["collected_at"], format="ISO8601").dt.floor("h")
     raw = raw.drop_duplicates(["station_id", "t"])
     idx = pd.date_range(C.START, C.END, freq="h")
     pm = raw.pivot(index="t", columns="station_id", values="value").reindex(idx)
@@ -57,7 +61,7 @@ def main():
     pm = pm.mask(stuck)
 
     # 2. Station selection by real-data coverage.
-    coverage = pm.notna().mean()
+    coverage = pm.loc[:C.SELECTION_END].notna().mean()
     keep = coverage[coverage >= C.MIN_COVERAGE].index
     dropped = sorted(set(pm.columns) - set(keep))
     print(f"Keeping {len(keep)} stations (coverage >= {C.MIN_COVERAGE:.0%}); dropped: {dropped}")
@@ -101,7 +105,7 @@ def main():
     features[:, :, 2:] = cal[:, None, :]
 
     # 7. Valid forecast origins t (last input hour). All targets must lie in the same split
-    #    and the input window must contain mostly real data (skips the Jan-Mar 2025 hole).
+    #    and the input window must contain mostly real data (skips network-wide outages).
     W, Hmax = C.INPUT_WINDOW, max(C.HORIZONS)
     obs_frac_hour = observed.mean(axis=1)
     win_obs = pd.Series(obs_frac_hour).rolling(W).mean().values
@@ -116,8 +120,10 @@ def main():
 
     splits = {"train": origins(0, train_end), "val": origins(train_end, val_end),
               "test": origins(val_end, T)}
+    print(f"Run: {C.RUN}")
     for k, v in splits.items():
-        print(f"  {k:5s}: {len(v):6,} origins  {idx[v[0]]} -> {idx[v[-1]]}")
+        span = f"{idx[v[0]]} -> {idx[v[-1]]}" if len(v) else "(none)"
+        print(f"  {k:5s}: {len(v):6,} origins  {span}")
 
     np.savez_compressed(
         C.DATASET_NPZ,

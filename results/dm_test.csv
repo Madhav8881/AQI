@@ -1,31 +1,31 @@
 Comparison,Horizon,DM stat,p-value,Better
-GAT-Transformer vs Persistence,1,-20.05,2.1823793854760342e-89,GAT-Transformer
-GAT-Transformer vs Persistence,3,-13.33,1.4505681571853537e-40,GAT-Transformer
-GAT-Transformer vs Persistence,6,-12.5,7.849517429026611e-36,GAT-Transformer
-GAT-Transformer vs Persistence,12,-9.39,6.136514329995836e-21,GAT-Transformer
-GAT-Transformer vs Persistence,24,-1.94,0.05287406375100057,GAT-Transformer
-GAT-Transformer vs Seasonal naive,1,-45.75,0.0,GAT-Transformer
-GAT-Transformer vs Seasonal naive,3,-16.01,1.0193130635722098e-57,GAT-Transformer
-GAT-Transformer vs Seasonal naive,6,-8.29,1.0940365376805862e-16,GAT-Transformer
-GAT-Transformer vs Seasonal naive,12,-3.95,7.862563216990525e-05,GAT-Transformer
-GAT-Transformer vs Seasonal naive,24,-1.94,0.05287406375100057,GAT-Transformer
-GAT-Transformer vs LSTM,1,-10.6,3.048059292888309e-26,GAT-Transformer
-GAT-Transformer vs LSTM,3,-5.85,4.7717726129448116e-09,GAT-Transformer
-GAT-Transformer vs LSTM,6,-2.88,0.003935017533022898,GAT-Transformer
-GAT-Transformer vs LSTM,12,-1.33,0.18511284454816965,GAT-Transformer
-GAT-Transformer vs LSTM,24,1.89,0.058421425472222774,LSTM
-GAT-Transformer vs Transformer,1,-13.06,5.904459985603187e-39,GAT-Transformer
-GAT-Transformer vs Transformer,3,-4.03,5.622562000223265e-05,GAT-Transformer
-GAT-Transformer vs Transformer,6,-0.36,0.718432674721091,GAT-Transformer
-GAT-Transformer vs Transformer,12,1.67,0.09426264299846052,Transformer
-GAT-Transformer vs Transformer,24,0.88,0.380035656292507,Transformer
-GAT-Transformer vs Robust LSTM,1,-15.97,2.0614547493620956e-57,GAT-Transformer
-GAT-Transformer vs Robust LSTM,3,-6.57,5.175169074170448e-11,GAT-Transformer
-GAT-Transformer vs Robust LSTM,6,-4.1,4.0866030894362716e-05,GAT-Transformer
-GAT-Transformer vs Robust LSTM,12,-1.53,0.12552322243185549,GAT-Transformer
-GAT-Transformer vs Robust LSTM,24,1.11,0.267899306330226,Robust LSTM
-GAT-Transformer vs Robust GAT-Transformer,1,-0.34,0.7306365883497774,GAT-Transformer
-GAT-Transformer vs Robust GAT-Transformer,3,1.93,0.05348207113766248,Robust GAT-Transformer
-GAT-Transformer vs Robust GAT-Transformer,6,0.99,0.322398607888585,Robust GAT-Transformer
-GAT-Transformer vs Robust GAT-Transformer,12,1.41,0.15919829238849936,Robust GAT-Transformer
-GAT-Transformer vs Robust GAT-Transformer,24,2.42,0.015492644041522311,Robust GAT-Transformer
+GAT-Transformer vs Persistence,1,-41.99,0.0,GAT-Transformer
+GAT-Transformer vs Persistence,3,-28.31,2.6866099929600993e-176,GAT-Transformer
+GAT-Transformer vs Persistence,6,-25.66,3.622354959806375e-145,GAT-Transformer
+GAT-Transformer vs Persistence,12,-20.14,2.9876590542635383e-90,GAT-Transformer
+GAT-Transformer vs Persistence,24,-6.8,1.0127634215690095e-11,GAT-Transformer
+GAT-Transformer vs Seasonal naive,1,-91.2,0.0,GAT-Transformer
+GAT-Transformer vs Seasonal naive,3,-31.52,4.639810528044112e-218,GAT-Transformer
+GAT-Transformer vs Seasonal naive,6,-16.94,2.4391762496709723e-64,GAT-Transformer
+GAT-Transformer vs Seasonal naive,12,-9.61,7.289138393587076e-22,GAT-Transformer
+GAT-Transformer vs Seasonal naive,24,-6.8,1.0127634215690095e-11,GAT-Transformer
+GAT-Transformer vs LSTM,1,-21.57,3.4407175620331117e-103,GAT-Transformer
+GAT-Transformer vs LSTM,3,-12.33,6.628286843398834e-35,GAT-Transformer
+GAT-Transformer vs LSTM,6,-6.54,6.15418660342073e-11,GAT-Transformer
+GAT-Transformer vs LSTM,12,-5.16,2.4557319501434216e-07,GAT-Transformer
+GAT-Transformer vs LSTM,24,0.27,0.7856221834041224,LSTM
+GAT-Transformer vs Transformer,1,-28.26,9.372805418681243e-176,GAT-Transformer
+GAT-Transformer vs Transformer,3,-11.26,2.045368230271147e-29,GAT-Transformer
+GAT-Transformer vs Transformer,6,-5.02,5.17767398607015e-07,GAT-Transformer
+GAT-Transformer vs Transformer,12,-0.17,0.8676902563928911,GAT-Transformer
+GAT-Transformer vs Transformer,24,-0.98,0.32818519018015446,GAT-Transformer
+GAT-Transformer vs Robust LSTM,1,-28.13,4.376475087738413e-174,GAT-Transformer
+GAT-Transformer vs Robust LSTM,3,-12.46,1.1730387038059547e-35,GAT-Transformer
+GAT-Transformer vs Robust LSTM,6,-6.85,7.561165994956415e-12,GAT-Transformer
+GAT-Transformer vs Robust LSTM,12,-3.92,8.882160964747417e-05,GAT-Transformer
+GAT-Transformer vs Robust LSTM,24,0.42,0.6749842783385126,Robust LSTM
+GAT-Transformer vs Robust GAT-Transformer,1,-4.04,5.2679192360273464e-05,GAT-Transformer
+GAT-Transformer vs Robust GAT-Transformer,3,0.47,0.6390463380994884,Robust GAT-Transformer
+GAT-Transformer vs Robust GAT-Transformer,6,0.14,0.892306748229344,Robust GAT-Transformer
+GAT-Transformer vs Robust GAT-Transformer,12,0.49,0.625776278546702,Robust GAT-Transformer
+GAT-Transformer vs Robust GAT-Transformer,24,1.72,0.08518095006610421,Robust GAT-Transformer
