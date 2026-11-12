@@ -12,6 +12,7 @@ then run the full evaluation (evaluate.py).
   existing checkpoint instead of starting from scratch (the original is kept as *_fullhist.pt).
 Usage:  python train_eval.py [--seeds 0 1 2] [--epochs 20] [--models LSTM ...] [--threads 4]
         python train_eval.py --models "GAT-Transformer" --finetune --history-dropout 0.5 --epochs 8
+        python train_eval.py --models "GAT-Transformer" --train-on-all --history-dropout 0.5 --epochs 3
         python train_eval.py --eval-only
 """
 import argparse
@@ -102,6 +103,36 @@ def validate(model, data, history_dropout):
     return 0.5 * (full + short)
 
 
+def train_on_all(name, seed, data, epochs, frac, station_dropout=0.0, history_dropout=0.0):
+    """Final step for deployment: continue from the current checkpoint on ALL data (train + the
+    months that were only used for early stopping), for a fixed number of epochs with a decaying
+    learning rate. The per-station scaler is left unchanged so the checkpoint stays valid."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    path = ckpt_path(name, seed)
+    backup = path.replace(".pt", "_beforeall.pt")
+    if not os.path.exists(backup):
+        shutil.copyfile(path, backup)
+    model = build_model(name, data.n_nodes, len(C.HORIZONS), window=C.INPUT_WINDOW)
+    model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+    origins = np.concatenate([data.splits["train"], data.splits["val"]])
+    opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-4)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    hist, t0 = {"train": []}, time.time()
+    print(f"  [{name} s{seed}] training on all {len(origins):,} origins "
+          f"({data.times[origins[0]]} -> {data.times[origins[-1]]})", flush=True)
+    for ep in range(1, epochs + 1):
+        tr = run_epoch(model, data, origins, data.adj, opt, frac=frac,
+                       station_dropout=station_dropout, history_dropout=history_dropout)
+        sched.step()
+        hist["train"].append(tr)
+        print(f"  [{name} s{seed}] ep {ep:02d} train {tr:.4f} ({time.time() - t0:.0f}s)", flush=True)
+    torch.save(model.state_dict(), path)
+    return {"trained_on_all": True, "origins": int(len(origins)), "station_dropout": station_dropout,
+            "history_dropout": history_dropout, "epochs": epochs, "seconds": round(time.time() - t0, 1),
+            "params": count_params(model), "history": hist}
+
+
 def train_one(name, seed, data, epochs, patience, frac, station_dropout=0.0,
               history_dropout=0.0, finetune=False):
     torch.manual_seed(seed)
@@ -158,6 +189,9 @@ def main():
                     help="probability that a training sample keeps only its last 1-23 input hours")
     ap.add_argument("--finetune", action="store_true",
                     help="continue from the existing checkpoint (lr 3e-4) instead of training from scratch")
+    ap.add_argument("--train-on-all", action="store_true",
+                    help="final deployment step: continue from the checkpoint on train + validation "
+                         "months together for a fixed number of --epochs (no early stopping)")
     ap.add_argument("--models", nargs="+", default=list(MODEL_CLASSES))
     ap.add_argument("--eval-only", action="store_true")
     ap.add_argument("--no-eval", action="store_true")
@@ -174,11 +208,17 @@ def main():
         for name in args.models:
             for seed in args.seeds:
                 print(f"\n=== {name} | seed {seed} ===", flush=True)
-                res = train_one(name, seed, data, args.epochs, args.patience, args.train_frac,
-                                args.station_dropout if args.station_dropout is not None
-                                else STATION_DROPOUT.get(name, 0.0),
-                                args.history_dropout, args.finetune)
-                with open(log_path(name, seed), "w") as f:
+                sd = (args.station_dropout if args.station_dropout is not None
+                      else STATION_DROPOUT.get(name, 0.0))
+                if args.train_on_all:
+                    res = train_on_all(name, seed, data, args.epochs, args.train_frac, sd,
+                                       args.history_dropout)
+                    out_path = log_path(name, seed).replace(".json", "_all.json")
+                else:
+                    res = train_one(name, seed, data, args.epochs, args.patience, args.train_frac,
+                                    sd, args.history_dropout, args.finetune)
+                    out_path = log_path(name, seed)
+                with open(out_path, "w") as f:
                     json.dump(res, f, indent=1)
     if not args.no_eval:
         evaluate.main()

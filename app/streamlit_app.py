@@ -133,7 +133,7 @@ st.session_state.setdefault("station", "Anand Vihar")
 with st.sidebar:
     st.title("🌫️ Delhi PM2.5 Forecaster")
     st.caption(f"{len(stations)} Delhi monitoring stations · live data via the World Air Quality Index project · "
-               + ("live forecasts by the final models, trained on Jan 2023 – Jun 2026" if C.RUN == "final" else
+               + ("live forecasts by the final models, trained on all data, Jan 2023 – Sep 2026" if C.RUN == "final" else
                   "live forecasts by the evaluated models, trained on Jan 2023 – Jun 2024"))
     station = st.selectbox("Station", names, key="station")
     sidx = names.index(station)

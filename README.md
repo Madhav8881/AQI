@@ -14,7 +14,7 @@ right now**, forecasts the next 24 hours, and scores those live forecasts as the
 - **Graph neural network.** Stations form a graph (8 nearest neighbours, distance-weighted). A Graph Attention Network learns, hour by hour, which neighbouring stations matter.
 - **Rigorous evaluation.** Chronological split, scalers fitted on training data only, causal (past-only) gap filling, metrics on real observations only, 3 random seeds per model, Diebold–Mariano significance tests, and a test set that runs **more than two years past the training data**.
 - **Robust to sensor failure.** The *Robust GAT-Transformer* forecasts a station whose sensor is down with **only +17% error** (vs +48% for an equally trained LSTM), by learning from its neighbours.
-- **Live mode, no maintenance.** Final models retrained on all data up to Jun 2026 and fine-tuned once to forecast from just the current live readings. Open the app any time: it fetches live PM2.5, forecasts the next 24 hours, saves the forecast and scores it when the real readings arrive. No daily retraining.
+- **Live mode, no maintenance.** Final models trained on all data up to Sep 2026 and fine-tuned once to forecast from just the current live readings. Open the app any time: it fetches live PM2.5, forecasts the next 24 hours, saves the forecast and scores it when the real readings arrive. No daily retraining.
 
 ---
 
@@ -79,14 +79,19 @@ to normal accuracy.
 ## Final models for live use
 
 The models above were evaluated on two unseen years. For deployment, the same architectures were
-**retrained once on all data, Jan 2023 – Jun 2026** (three winters), with Jul – Sep 2026 used only for
-early stopping. They are never retrained during use: each forecast just reads the latest live readings.
+**retrained once and finally trained on all available data, Jan 2023 – Sep 2026** (three winters).
+Jul – Sep 2026 was first held out to choose the stopping point, then added for a last short training
+pass (3 epochs, decaying learning rate); the earlier models are kept as `*_beforeall.pt`. They are never
+retrained during use: each forecast just reads the latest live readings. Because the final models have
+now seen every month we have, their honest test is the live scoring in the app; the hold-out results
+above remain the evidence that the method generalises.
 
 **Forecasting right after start-up.** The live feed only provides the current hour, so when the app is
 opened without a collector running the model sees little history. A one-time fine-tuning with *history
 dropout* (in half the training samples only the last 1–23 hours are visible) fixes this.
-MAE on Jul – Sep 2026, µg/m³ (the monsoon season, and the period used to pick the best fine-tuning round,
-so slightly optimistic):
+MAE on Jul – Sep 2026, µg/m³, measured before the last all-data pass (while those months were still
+held out; the monsoon season, and the period used to pick the best fine-tuning round, so slightly
+optimistic):
 
 | Model | 24 h history | 6 h | 3 h | **1 h** |
 |---|---|---|---|---|
@@ -202,12 +207,15 @@ python train_eval.py              # train all models x 3 seeds, then evaluate   
 python train_eval.py --eval-only  # re-evaluate existing checkpoints
 python sensor_failure_eval.py     # sensor-failure test
 
-# Final models for live use (all data up to Jun 2026), then the one-time short-history fine-tuning
+# Final models for live use: train to Jun 2026 (Jul-Sep 2026 held out for early stopping), fine-tune
+# once for short history, then a last pass on ALL data up to Sep 2026
 AQI_RUN=final python preprocess.py
 AQI_RUN=final python train_eval.py --seeds 0 --train-frac 0.25 --no-eval \
     --models LSTM Transformer GAT-Transformer "Robust GAT-Transformer"
 AQI_RUN=final python train_eval.py --seeds 0 --train-frac 0.25 --no-eval --epochs 8 --patience 3 \
     --finetune --history-dropout 0.5 --models LSTM Transformer GAT-Transformer "Robust GAT-Transformer"
+AQI_RUN=final python train_eval.py --seeds 0 --train-frac 0.25 --no-eval --epochs 3 \
+    --train-on-all --history-dropout 0.5 --models LSTM Transformer GAT-Transformer "Robust GAT-Transformer"
 ```
 (On Windows PowerShell set the variable first: `$env:AQI_RUN = "final"`.)
 
@@ -247,7 +255,7 @@ AQI/
 │   ├── raw/                        # station metadata + raw measurements
 │   └── processed/                  # dataset.npz, graph, scaler, station list, WAQI station map
 ├── checkpoints/                    # evaluated models (<model>_seed<k>.pt)
-│   └── final/                      # live models, trained up to Jun 2026 (+ *_fullhist.pt before fine-tuning)
+│   └── final/                      # live models, trained on all data to Sep 2026 (+ backups *_fullhist.pt, *_beforeall.pt)
 ├── results/                        # metrics CSVs, test predictions, training logs
 │   └── final/                      # final models' training logs
 ├── Spatiotemporal_AQI_Forecasting.ipynb   # walkthrough notebook

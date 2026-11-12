@@ -28,7 +28,8 @@ SELECTION_END = "2025-08-31 23:00:00"  # station coverage is judged on the origi
 # Two runs share this code:
 #   "holdout" (default) - the evaluated models: train 2023 - Jun 2024, tested on Oct 2024 - Sep 2026.
 #   "final"             - deployment models for live use, retrained on all data up to Sep 2026
-#                         (train Jan 2023 - Jun 2026, validation Jul - Sep 2026 for early stopping).
+#                         (train Jan 2023 - Jun 2026, validation Jul - Sep 2026 for early stopping;
+#                         a last `--train-on-all` pass then also trains on Jul - Sep 2026).
 # Select with the environment variable AQI_RUN=final.
 RUN = os.environ.get("AQI_RUN", "holdout")
 HOLDOUT_RESULTS_DIR = RESULTS_DIR
