@@ -68,27 +68,29 @@ TRAINING AND TEST DATA  (test run used to measure how good the model is)
 HOW WELL THE MODEL DOES ON THE 2-YEAR TEST DATA
   Averaged over all forecast times (1-24 hours ahead):
 
-                               GAT-Transformer    "No change" guess
+                               GAT-Transformer    Basic forecast*
     Explains PM2.5 changes (R2)      75%                57%
-    Average miss                    27 ug/m3           36 ug/m3
-    Exactly the right level         58%                51%
-    Right level or one off          94%                87%
+    Average error                    27 ug/m3           36 ug/m3
+    Correct AQI level         58%                51%
+    AQI level within +-1          94%                87%
+
+  * Basic forecast = just repeats the current reading (no learning).
 
   By how far ahead:
 
-    Hours ahead   R2     Exact level   Within one level   Avg miss
+    Hours ahead   R2     Correct level   Within +-1 level   Avg error
          1       0.93       74%            98.5%           14 ug/m3
          3       0.82       61%            95.6%           24 ug/m3
          6       0.72       54%            93.2%           29 ug/m3
         12       0.66       51%            91.3%           33 ug/m3
         24       0.62       49%            90.4%           35 ug/m3
 
-  Other models, average miss over all hours (lower is better):
-    No-change guess 36.1 | LSTM 27.7 | Transformer 27.4 |
+  Other models, average error over all hours (lower is better):
+    Basic forecast 36.1 | LSTM 27.7 | Transformer 27.4 |
     GAT-Transformer 26.9 | Robust GAT-Transformer 27.0
 
-  Only 2026 data: GAT-Transformer misses by 22.0 ug/m3 vs 29.1 for the
-  "no change" guess.
+  Only 2026 data: GAT-Transformer has an error of 22.0 ug/m3 vs 29.1 for the
+  basic forecast.
 
   If a station's sensor stops working, the Robust GAT-Transformer's error
   rises only 17% (Robust LSTM: 48%) because it borrows from neighbours.
@@ -99,7 +101,7 @@ HOW WELL THE MODEL DOES ON THE 2-YEAR TEST DATA
 
 HONEST NOTES
   - Accuracy drops for forecasts further ahead (normal for air pollution).
-  - Exact-level accuracy is a strict measure; "within one level" is lenient.
+  - Correct-level accuracy is a strict measure; "within +-1 level" is lenient.
   - The graph (neighbouring stations) gives a modest gain over the plain
     Transformer (26.9 vs 27.4 ug/m3).
   - Live readings are converted from AQI to ug/m3, so they can differ a

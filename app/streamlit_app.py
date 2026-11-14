@@ -37,7 +37,7 @@ MODEL_COLORS = {
 }
 # Plain-language names first, the technical name in brackets for those who want it.
 FRIENDLY = {
-    "Persistence": "Simple guess: no change (Persistence)",
+    "Persistence": "Basic forecast (Persistence)",
     "Seasonal naive": "Same hour yesterday",
     "LSTM": "Standard model (LSTM)",
     "Transformer": "Standard model (Transformer)",
@@ -345,8 +345,8 @@ def render_today():
     if hz is not None and not failed:
         g = hz[hz.Model == "GAT-Transformer"].set_index("Horizon")["MAE_mean"]
         if 1 in g.index and 24 in g.index:
-            st.caption(f"How much to trust it: over two years of past tests, forecasts were off by about "
-                       f"{g[1]:.0f} µg/m³ one hour ahead and about {g[24]:.0f} µg/m³ a day ahead, on average. "
+            st.caption(f"How much to trust it: over two years of past tests, the average error was about "
+                       f"{g[1]:.0f} µg/m³ one hour ahead and about {g[24]:.0f} µg/m³ a day ahead. "
                        f"Sudden changes (a gust of wind, rain, fires) can't be predicted.")
 
     # Chart: what was measured, and what we expect.
@@ -406,13 +406,13 @@ def render_today():
     # Live scoring.
     st.markdown("#### Has the forecast been right?")
     st.markdown("Every hour the app saves its forecasts. When the real reading for that hour arrives, it checks "
-                "how far off the forecast was. **Smaller is better.** “Simple guess” just assumes nothing changes.")
+                "the error. **Smaller is better.** The basic forecast just repeats the current reading.")
     sc = L.live_scores(readings, fcs)
     if sc.empty:
         st.caption("Nothing to check yet — the first forecast reaches its time (one hour ahead) within an hour.")
     else:
         piv = sc.pivot(index="model", columns="horizon", values="MAE").round(1)
-        piv.columns = [f"{h} h ahead (µg/m³ off)" for h in piv.columns]
+        piv.columns = [f"{h} h ahead (error, µg/m³)" for h in piv.columns]
         piv["forecasts checked"] = sc.groupby("model")["n"].sum()
         piv.index = [nm(m) for m in piv.index]
         piv.index.name = "Model"
@@ -467,8 +467,8 @@ def render_reality():
     right = ours["band_ok"].mean()
     st.markdown(
         f"<div style='border-radius:14px;padding:18px;background:#7C3AED18;border-left:8px solid #7C3AED'>"
-        f"<div style='font-size:15px;opacity:.75'>For forecasts made {when} ahead, we named the right "
-        f"air-quality level (Good, Moderate, Poor…)</div>"
+        f"<div style='font-size:15px;opacity:.75'>Forecasts made {when} ahead had the correct AQI level "
+        f"(Good, Moderate, Poor…)</div>"
         f"<div style='font-size:44px;font-weight:800;line-height:1.2'>{right:.0%} of the time</div>"
         f"<div style='font-size:13px;opacity:.7'>Checked {len(ours):,} forecasts across "
         f"{ours['station_id'].nunique()} stations, {first:%d %b} to {last:%d %b}.</div></div>",
@@ -477,12 +477,12 @@ def render_reality():
         b_right = base["band_ok"].mean()
         a_gap, b_gap = ours["abs_err"].mean(), base["abs_err"].mean()
         c = st.columns(2)
-        c[0].metric("Our forecast vs the simple guess ('no change')",
-                    f"{right:.0%} vs {b_right:.0%}", f"{(right - b_right) * 100:+.0f} points right",
-                    help="The simple guess just repeats the current reading. Higher is better.")
-        c[1].metric("Average difference from reality", f"{a_gap:.0f} µg/m³",
-                    f"{b_gap - a_gap:.0f} less than the simple guess ({b_gap:.0f})", delta_color="normal",
-                    help="How far off the forecast is on average, in PM2.5 µg/m³. Lower is better.")
+        c[0].metric("Correct AQI level: our model vs basic forecast",
+                    f"{right:.0%} vs {b_right:.0%}", f"{(right - b_right) * 100:+.0f} points",
+                    help="The basic forecast just repeats the current reading. Higher is better.")
+        c[1].metric("Average error", f"{a_gap:.0f} µg/m³",
+                    f"{b_gap - a_gap:.0f} lower than basic forecast ({b_gap:.0f})", delta_color="normal",
+                    help="Average gap between forecast and real PM2.5, in µg/m³. Lower is better.")
 
     # ---- one station, two lines
     sid = stations["station_id"].iloc[sidx]
@@ -509,7 +509,7 @@ def render_reality():
             "Time": [f"{x:%a %d %b, %I %p}".replace(" 0", " ") for x in t["target_time"]],
             "We predicted": [band_name(v) for v in t["pred"]],
             "What happened": [band_name(v) for v in t["actual"]],
-            "Match": ["✅ Right" if ok else "❌ Different" for ok in t["band_ok"]]})
+            "Match": ["✅ Correct" if ok else "❌ Wrong" for ok in t["band_ok"]]})
         st.markdown("**Latest forecasts at this station**")
         st.dataframe(tab, hide_index=True, width="stretch")
 
@@ -520,16 +520,16 @@ def render_reality():
             p = sc[(sc["model"] == "Persistence") & (sc["horizon"] == h)]
             if len(o) and len(p):
                 rows.append({"Forecast made": names.get(h, f"In {h} hours"),
-                             "Right level (ours)": f"{o['band_ok'].mean():.0%}",
-                             "Right level (simple guess)": f"{p['band_ok'].mean():.0%}",
-                             "Avg difference, ours (µg/m³)": round(o["abs_err"].mean(), 1),
-                             "Avg difference, simple guess (µg/m³)": round(p["abs_err"].mean(), 1),
+                             "Correct AQI level (our model)": f"{o['band_ok'].mean():.0%}",
+                             "Correct AQI level (basic)": f"{p['band_ok'].mean():.0%}",
+                             "Average error, our model (µg/m³)": round(o["abs_err"].mean(), 1),
+                             "Average error, basic (µg/m³)": round(p["abs_err"].mean(), 1),
                              "Forecasts checked": len(o)})
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
         sd = ours.groupby("station_id")["abs_err"].mean().round(1)
         sd.index = sd.index.map(stations.set_index("station_id")["name"])
-        st.markdown(f"**Average difference by station ({when}, µg/m³, lower is better)**")
-        st.dataframe(sd.sort_values().rename("Average difference"), width="stretch")
+        st.markdown(f"**Average error by station ({when}, µg/m³, lower is better)**")
+        st.dataframe(sd.sort_values().rename("Average error"), width="stretch")
         st.download_button("⬇️ Download every checked forecast (CSV)",
                            sc.drop(columns=["abs_err", "band_ok"]).to_csv(index=False),
                            file_name="prediction_vs_reality.csv", mime="text/csv")
@@ -563,7 +563,7 @@ def scorecard(_version):
             by, bq = np.digitize(y, CAT_EDGES), np.digitize(q, CAT_EDGES)
             rows.append({"Model": m, "Hours ahead": h,
                          "R²": 1 - ((q - y) ** 2).sum() / ((y - y.mean()) ** 2).sum(),
-                         "Exact level": (by == bq).mean(), "Within one level": (abs(by - bq) <= 1).mean(),
+                         "Correct AQI level": (by == bq).mean(), "AQI level within ±1": (abs(by - bq) <= 1).mean(),
                          "MAE": np.abs(q - y).mean(), "RMSE": np.sqrt(((q - y) ** 2).mean())})
     return pd.DataFrame(rows)
 
@@ -578,23 +578,23 @@ def render_scorecard():
     st.markdown("### Model scorecard (2-year test data)")
     st.markdown(f"Our main model ({main}) on **{len(np.load(os.path.join(C.HOLDOUT_RESULTS_DIR, 'test_predictions.npz'))['origins']):,} "
                 "hours** of unseen data (Oct 2024 – Sep 2026), 36 stations, forecasts 1–24 hours ahead. "
-                "Small grey numbers compare with the simple 'no change' guess.")
+                "Small numbers underneath show the difference from the basic forecast (repeats the current reading).")
     k = st.columns(5)
-    k[0].metric("R² (changes explained)", f"{a['R²']:.0%}", f"{(a['R²'] - b['R²']) * 100:+.0f} pts",
+    k[0].metric("R² score", f"{a['R²']:.0%}", f"{(a['R²'] - b['R²']) * 100:+.0f} pts",
                 help="Share of the ups and downs of PM2.5 the model explains. 100% = perfect.")
-    k[1].metric("Within one level", f"{a['Within one level']:.0%}",
-                f"{(a['Within one level'] - b['Within one level']) * 100:+.0f} pts",
+    k[1].metric("AQI level within ±1", f"{a['AQI level within ±1']:.0%}",
+                f"{(a['AQI level within ±1'] - b['AQI level within ±1']) * 100:+.0f} pts",
                 help="Forecast is in the right air-quality level or the one next to it (lenient).")
-    k[2].metric("Exact level", f"{a['Exact level']:.0%}", f"{(a['Exact level'] - b['Exact level']) * 100:+.0f} pts",
-                help="Forecast is in exactly the right level: Good, Satisfactory, Moderate, Poor… (strict).")
-    k[3].metric("MAE (avg miss)", f"{a['MAE']:.1f} µg/m³", f"{a['MAE'] - b['MAE']:.1f}", delta_color="inverse",
+    k[2].metric("Correct AQI level", f"{a['Correct AQI level']:.0%}", f"{(a['Correct AQI level'] - b['Correct AQI level']) * 100:+.0f} pts",
+                help="Forecast is in the correct AQI level: Good, Satisfactory, Moderate, Poor… (strict).")
+    k[3].metric("MAE (average error)", f"{a['MAE']:.1f} µg/m³", f"{a['MAE'] - b['MAE']:.1f}", delta_color="inverse",
                 help="Average gap between forecast and real reading. Lower is better.")
     k[4].metric("RMSE", f"{a['RMSE']:.1f} µg/m³", f"{a['RMSE'] - b['RMSE']:.1f}", delta_color="inverse",
                 help="Like MAE but punishes big misses more. Lower is better.")
 
     t = sc[sc["Model"] == main].copy()
     t["Hours ahead"] = t["Hours ahead"].map(lambda h: "All (1–24 h)" if h == "All" else f"{h} h")
-    for col in ("R²", "Exact level", "Within one level"):
+    for col in ("R²", "Correct AQI level", "AQI level within ±1"):
         t[col] = t[col].map(lambda v: f"{v:.0%}")
     for col in ("MAE", "RMSE"):
         t[col] = t[col].map(lambda v: f"{v:.1f}")
@@ -602,7 +602,7 @@ def render_scorecard():
                  hide_index=True, width="stretch")
     with st.expander("Same scorecard for every model"):
         allm = sc[sc["Hours ahead"] == "All"].drop(columns="Hours ahead").assign(Model=lambda d: d["Model"].map(nm))
-        st.dataframe(allm.style.format({"R²": "{:.0%}", "Exact level": "{:.0%}", "Within one level": "{:.0%}",
+        st.dataframe(allm.style.format({"R²": "{:.0%}", "Correct AQI level": "{:.0%}", "AQI level within ±1": "{:.0%}",
                                         "MAE": "{:.1f}", "RMSE": "{:.1f}"}), hide_index=True, width="stretch")
     st.divider()
 
@@ -621,19 +621,19 @@ def render_quality():
                 "including two winters), across all 36 stations. For every hour we compared its forecast with "
                 "what the sensor really measured.")
     k = st.columns(3)
-    k[0].metric("Typical miss", f"{best['MAE_mean']:.0f} µg/m³",
+    k[0].metric("Average error", f"{best['MAE_mean']:.0f} µg/m³",
                 help="Average gap between the forecast and the real reading (called MAE). Smaller is better.")
-    k[1].metric("Better than a simple guess by", f"{(1 - best['MAE_mean'] / pers):.0%}",
-                help="The simple guess assumes the air stays exactly as it is now.")
-    k[2].metric("Right colour band", f"{best['AQI_acc_mean']:.0%}",
+    k[1].metric("Better than the basic forecast by", f"{(1 - best['MAE_mean'] / pers):.0%}",
+                help="The basic forecast just repeats the current reading.")
+    k[2].metric("Correct AQI level", f"{best['AQI_acc_mean']:.0%}",
                 help="How often the forecast lands in the same air-quality category (Good, Moderate, Poor, …) "
-                     "as the real reading. Being one band off counts as a miss, so this is a strict score.")
-    st.caption("Results shown for our best single model. “Typical miss” covers all forecast times from 1 to 24 "
+                     "as the real reading. One level off counts as wrong, so this is a strict score.")
+    st.caption("Results shown for our best single model. “Average error” covers all forecast times from 1 to 24 "
                "hours ahead; it is smaller for near-term forecasts (see the chart below).")
 
     show = ov.assign(Model=ov["Model"].map(nm))
     st.dataframe(show[["Model", "MAE", "AQI category acc."]].rename(
-        columns={"MAE": "Typical miss (µg/m³)", "AQI category acc.": "Right colour band"}),
+        columns={"MAE": "Average error (µg/m³)", "AQI category acc.": "Correct AQI level"}),
         hide_index=True, width="stretch")
     with st.expander("More technical measures (RMSE, R²)"):
         st.dataframe(show[["Model", "RMSE", "R²"]], hide_index=True, width="stretch")
@@ -648,18 +648,18 @@ def render_quality():
             fig.add_trace(go.Scatter(x=[f"{h} h" for h in g["Horizon"]], y=g["MAE_mean"],
                                      error_y=dict(type="data", array=g["MAE_std"]),
                                      name=name, mode="lines+markers", line=dict(color=COLORS_BY_NAME.get(name))))
-        fig.update_layout(title="Typical miss by how far ahead we forecast", xaxis_title="Hours ahead",
-                          yaxis_title="Typical miss (µg/m³)", height=380, margin=dict(l=10, r=10, t=40, b=10))
+        fig.update_layout(title="Average error by how far ahead we forecast", xaxis_title="Hours ahead",
+                          yaxis_title="Average error (µg/m³)", height=380, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig, width="stretch")
     with c2:
         ss = res["metrics_season"].assign(Model=lambda d: d["Model"].map(nm))
         fig = px.bar(ss, x="Subset", y="MAE_mean", color="Model", barmode="group",
                      error_y="MAE_std", color_discrete_map=COLORS_BY_NAME)
-        fig.update_layout(title="Typical miss in different periods", yaxis_title="Typical miss (µg/m³)",
+        fig.update_layout(title="Average error in different periods", yaxis_title="Average error (µg/m³)",
                           xaxis_title=None, height=380, margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig, width="stretch")
     st.caption("Winter smog is much harder to forecast than summer: pollution changes quickly and sharply, so "
-               "misses are larger in winter and during severe episodes.")
+               "errors are larger in winter and during severe episodes.")
 
     sf = res.get("sensor_failure")
     if sf is not None:
@@ -675,15 +675,15 @@ def render_quality():
                 fig.add_trace(go.Bar(x=[f"{h} h" for h in g["Horizon"]], y=g["MAE_failed"], name=name,
                                      marker_color=COLORS_BY_NAME.get(name, "#D1D5DB")))
             fig.update_layout(barmode="group", xaxis_title="Hours ahead",
-                              yaxis_title="Typical miss with the sensor broken (µg/m³)",
+                              yaxis_title="Average error with the sensor broken (µg/m³)",
                               height=360, margin=dict(l=10, r=10, t=10, b=10))
             st.plotly_chart(fig, width="stretch")
         with c2:
             tbl = sf.groupby("Model", sort=False)[["MAE_normal", "MAE_failed"]].mean()
             tbl["Gets worse by"] = (tbl["MAE_failed"] / tbl["MAE_normal"] - 1).map(
                 lambda v: "—" if not np.isfinite(v) else f"{v:+.0%}")
-            st.dataframe(tbl.rename(columns={"MAE_normal": "Miss, sensor working",
-                                             "MAE_failed": "Miss, sensor broken"}).round(1),
+            st.dataframe(tbl.rename(columns={"MAE_normal": "Error, sensor working",
+                                             "MAE_failed": "Error, sensor broken"}).round(1),
                          width="stretch")
 
     stm = res["metrics_station"]
@@ -691,17 +691,17 @@ def render_quality():
     models_avail = list(stm["Model"].unique())
     mname = st.selectbox("Model", models_avail, format_func=nm,
                          index=models_avail.index("GAT-Transformer") if "GAT-Transformer" in models_avail else 0)
-    sdf = stm[stm["Model"] == mname].merge(stations, on="station_id").rename(columns={"MAE": "Typical miss"})
+    sdf = stm[stm["Model"] == mname].merge(stations, on="station_id").rename(columns={"MAE": "Average error"})
     c1, c2 = st.columns([3, 2])
     with c1:
-        fig = px.scatter_map(sdf, lat="lat", lon="lon", color="Typical miss", size="Typical miss",
+        fig = px.scatter_map(sdf, lat="lat", lon="lon", color="Average error", size="Average error",
                              hover_name="name", color_continuous_scale="Viridis_r", zoom=9.2,
                              center={"lat": 28.65, "lon": 77.17}, height=420, map_style="carto-positron")
         fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
         st.plotly_chart(fig, width="stretch")
     with c2:
-        st.dataframe(sdf[["name", "Typical miss"]].rename(columns={"name": "Station"})
-                     .sort_values("Typical miss").round(1), hide_index=True, width="stretch", height=420)
+        st.dataframe(sdf[["name", "Average error"]].rename(columns={"name": "Station"})
+                     .sort_values("Average error").round(1), hide_index=True, width="stretch", height=420)
 
     dm = res.get("dm_test")
     if dm is not None and len(dm):
@@ -750,7 +750,7 @@ of year. It pays attention to **neighbouring stations**, because pollution drift
 predicts the next 1, 3, 6, 12 and 24 hours at every station. It does **not** use weather forecasts.
 
 ### How accurate is it?
-About **25% closer to reality than simply assuming nothing changes**, tested on two full years it had never seen
+About **25% lower error than the basic forecast** (which just repeats the current reading), tested on two full years it had never seen
 (see the “How good is it?” tab). Forecasts are best for the next few hours and get less certain a day ahead.
 
 ### What it can't do
