@@ -542,11 +542,77 @@ with tab_real:
 
 
 # ----------------------------------------------------------------------------- how good is it
+@st.cache_data(show_spinner="Computing test metrics…")
+def scorecard(_version):
+    """Per-horizon metrics on the 2-year test set from the saved test predictions."""
+    pred_path = os.path.join(C.HOLDOUT_RESULTS_DIR, "test_predictions.npz")
+    ds_path = os.path.join(C.PROCESSED_DIR, "dataset.npz")
+    if not (os.path.exists(pred_path) and os.path.exists(ds_path)):
+        return None
+    z, ds = np.load(pred_path, allow_pickle=True), np.load(ds_path, allow_pickle=True)
+    names_, P = [str(n) for n in z["names"]], z["preds"]
+    tgt = z["origins"][:, None] + np.array(C.HORIZONS)
+    Y, M = ds["pm25"][tgt], ds["observed"][tgt].astype(bool)
+    rows = []
+    for mi, m in enumerate(names_):
+        p = P[mi]
+        for hi, h in list(enumerate(C.HORIZONS)) + [(None, "All")]:
+            sl = slice(None) if hi is None else hi
+            y, q, k = Y[:, sl], p[:, sl], M[:, sl]
+            y, q = y[k], q[k]
+            by, bq = np.digitize(y, CAT_EDGES), np.digitize(q, CAT_EDGES)
+            rows.append({"Model": m, "Hours ahead": h,
+                         "R²": 1 - ((q - y) ** 2).sum() / ((y - y.mean()) ** 2).sum(),
+                         "Exact level": (by == bq).mean(), "Within one level": (abs(by - bq) <= 1).mean(),
+                         "MAE": np.abs(q - y).mean(), "RMSE": np.sqrt(((q - y) ** 2).mean())})
+    return pd.DataFrame(rows)
+
+
+def render_scorecard():
+    sc = scorecard(_version(os.path.join(C.HOLDOUT_RESULTS_DIR, "test_predictions.npz")))
+    if sc is None:
+        return
+    main = "GAT-Transformer"
+    a = sc[(sc["Model"] == main) & (sc["Hours ahead"] == "All")].iloc[0]
+    b = sc[(sc["Model"] == "Persistence") & (sc["Hours ahead"] == "All")].iloc[0]
+    st.markdown("### Model scorecard (2-year test data)")
+    st.markdown(f"Our main model ({main}) on **{len(np.load(os.path.join(C.HOLDOUT_RESULTS_DIR, 'test_predictions.npz'))['origins']):,} "
+                "hours** of unseen data (Oct 2024 – Sep 2026), 36 stations, forecasts 1–24 hours ahead. "
+                "Small grey numbers compare with the simple 'no change' guess.")
+    k = st.columns(5)
+    k[0].metric("R² (changes explained)", f"{a['R²']:.0%}", f"{(a['R²'] - b['R²']) * 100:+.0f} pts",
+                help="Share of the ups and downs of PM2.5 the model explains. 100% = perfect.")
+    k[1].metric("Within one level", f"{a['Within one level']:.0%}",
+                f"{(a['Within one level'] - b['Within one level']) * 100:+.0f} pts",
+                help="Forecast is in the right air-quality level or the one next to it (lenient).")
+    k[2].metric("Exact level", f"{a['Exact level']:.0%}", f"{(a['Exact level'] - b['Exact level']) * 100:+.0f} pts",
+                help="Forecast is in exactly the right level: Good, Satisfactory, Moderate, Poor… (strict).")
+    k[3].metric("MAE (avg miss)", f"{a['MAE']:.1f} µg/m³", f"{a['MAE'] - b['MAE']:.1f}", delta_color="inverse",
+                help="Average gap between forecast and real reading. Lower is better.")
+    k[4].metric("RMSE", f"{a['RMSE']:.1f} µg/m³", f"{a['RMSE'] - b['RMSE']:.1f}", delta_color="inverse",
+                help="Like MAE but punishes big misses more. Lower is better.")
+
+    t = sc[sc["Model"] == main].copy()
+    t["Hours ahead"] = t["Hours ahead"].map(lambda h: "All (1–24 h)" if h == "All" else f"{h} h")
+    for col in ("R²", "Exact level", "Within one level"):
+        t[col] = t[col].map(lambda v: f"{v:.0%}")
+    for col in ("MAE", "RMSE"):
+        t[col] = t[col].map(lambda v: f"{v:.1f}")
+    st.dataframe(t.drop(columns="Model").rename(columns={"MAE": "MAE (µg/m³)", "RMSE": "RMSE (µg/m³)"}),
+                 hide_index=True, width="stretch")
+    with st.expander("Same scorecard for every model"):
+        allm = sc[sc["Hours ahead"] == "All"].drop(columns="Hours ahead").assign(Model=lambda d: d["Model"].map(nm))
+        st.dataframe(allm.style.format({"R²": "{:.0%}", "Exact level": "{:.0%}", "Within one level": "{:.0%}",
+                                        "MAE": "{:.1f}", "RMSE": "{:.1f}"}), hide_index=True, width="stretch")
+    st.divider()
+
+
 def render_quality():
     ov = res.get("metrics_overall")
     if ov is None:
         st.info("The accuracy results aren't available yet — run the evaluation first.")
         return
+    render_scorecard()
 
     best = ov.loc[ov["MAE_mean"].idxmin()]
     pers = ov.loc[ov["Model"] == "Persistence", "MAE_mean"].iloc[0]
