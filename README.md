@@ -81,7 +81,7 @@ to normal accuracy.
 The models above were evaluated on two unseen years. For deployment, the same architectures were
 **retrained once and finally trained on all available data, Jan 2023 – Sep 2026** (three winters).
 Jul – Sep 2026 was first held out to choose the stopping point, then added for a last short training
-pass (3 epochs, decaying learning rate); the earlier models are kept as `*_beforeall.pt`. They are never
+pass (3 epochs, decaying learning rate). They are never
 retrained during use: each forecast just reads the latest live readings. Because the final models have
 now seen every month we have, their honest test is the live scoring in the app; the hold-out results
 above remain the evidence that the method generalises.
@@ -255,7 +255,7 @@ AQI/
 │   ├── raw/                        # station metadata + raw measurements
 │   └── processed/                  # dataset.npz, graph, scaler, station list, WAQI station map
 ├── checkpoints/                    # evaluated models (<model>_seed<k>.pt)
-│   └── final/                      # live models, trained on all data to Sep 2026 (+ backups *_fullhist.pt, *_beforeall.pt)
+│   └── final/                      # live models, trained on all data to Sep 2026
 ├── results/                        # metrics CSVs, test predictions, training logs
 │   └── final/                      # final models' training logs
 ├── Spatiotemporal_AQI_Forecasting.ipynb   # walkthrough notebook

@@ -1,0 +1,106 @@
+DELHI PM2.5 FORECASTING - MODEL SUMMARY
+=======================================
+
+WHAT THE MODEL DOES
+  Predicts PM2.5 (a measure of air pollution) at 36 Delhi stations for the
+  next 1, 3, 6, 12 and 24 hours, using the last 24 hours of readings.
+  Model: GAT-Transformer (a graph network that lets nearby stations share
+  information, plus a Transformer that learns the time pattern).
+  Final forecast in the app = average of GAT-Transformer, Robust
+  GAT-Transformer and Transformer ("Ensemble").
+
+
+FACTORS USED BY THE FORECASTER (live app and test)
+  For each station the model looks at the last 24 hours. Every hour has
+  8 inputs, all derived from the PM2.5 readings and the clock:
+    1. PM2.5 reading (scaled per station)
+    2. Was it really measured? (yes/no flag, so filled gaps are known)
+    3-4. Time of day (hour, so daily traffic/night patterns are learned)
+    5-6. Day of week (weekday vs weekend)
+    7-8. Time of year (seasons: winter smog, monsoon cleaning)
+  Also used:
+    - Which station it is (each station has its own learned profile)
+    - The 8 nearest stations, weighted by distance (the graph / GAT part),
+      so pollution moving across the city is picked up
+    - The shape of the last 24 hours (rising or falling)
+  NOT used:
+    - Weather (temperature, humidity, pressure, wind). Tested with
+      Open-Meteo data: only 2-3% better, so left out.
+    - Wind direction and other pollutants (excluded by choice)
+    - Fires, traffic counts, festivals, rain forecasts
+  Because of this, forecasts 12-24 hours ahead are less accurate, and
+  sudden events (e.g. Diwali fireworks, a wind change) can be missed.
+
+
+DATASET
+  Real hourly PM2.5 readings from 36 Delhi air-quality monitoring stations
+  (CPCB / DPCC / IMD).
+
+  Source 1: XKDR air quality API (Jan 2023 - Aug 2025)
+            file: data/raw/delhi_pm25_2023_2025_raw.csv
+  Source 2: "Delhi Air Quality CPCB Hourly 2010-2026" on Kaggle
+            (yug201/delhi-air-quality-cpcb-hourly-2010-2026),
+            used for Jan 2025 - Sep 2026
+            file: data/raw/delhi_pm25_cpcb_2025_2026.csv
+            (matched the XKDR data exactly on 117,055 overlapping readings)
+
+  Total: 32,856 hours (Jan 2023 - Sep 2026) x 36 stations.
+  93.5% of the values are real measurements; the rest were filled in
+  using only past data. No wind direction or other pollutants are used.
+
+  Live data (for the "Prediction vs reality" page): World Air Quality
+  Index (aqicn.org) feed, collected hourly.
+
+
+TRAINING AND TEST DATA  (test run used to measure how good the model is)
+  Training   Jan 2023 - Jun 2024     12,905 forecast samples
+  Validation Jul 2024 - Sep 2024      2,184 forecast samples (picks best model)
+  TEST       Oct 2024 - Sep 2026     17,393 forecast samples (~2 years)
+
+  The test data was never used for training or for any choice.
+  It is the future relative to the training data, as in real use.
+  Each model was trained 3 times (3 random seeds); results are the average.
+
+  FINAL MODELS used in the live app were retrained on all data up to
+  Sep 2026 (about 32,500 samples) so they know the latest conditions.
+
+
+HOW WELL THE MODEL DOES ON THE 2-YEAR TEST DATA
+  Averaged over all forecast times (1-24 hours ahead):
+
+                               GAT-Transformer    "No change" guess
+    Explains PM2.5 changes (R2)      75%                57%
+    Average miss                    27 ug/m3           36 ug/m3
+    Exactly the right level         58%                51%
+    Right level or one off          94%                87%
+
+  By how far ahead:
+
+    Hours ahead   R2     Exact level   Within one level   Avg miss
+         1       0.93       74%            98.5%           14 ug/m3
+         3       0.82       61%            95.6%           24 ug/m3
+         6       0.72       54%            93.2%           29 ug/m3
+        12       0.66       51%            91.3%           33 ug/m3
+        24       0.62       49%            90.4%           35 ug/m3
+
+  Other models, average miss over all hours (lower is better):
+    No-change guess 36.1 | LSTM 27.7 | Transformer 27.4 |
+    GAT-Transformer 26.9 | Robust GAT-Transformer 27.0
+
+  Only 2026 data: GAT-Transformer misses by 22.0 ug/m3 vs 29.1 for the
+  "no change" guess.
+
+  If a station's sensor stops working, the Robust GAT-Transformer's error
+  rises only 17% (Robust LSTM: 48%) because it borrows from neighbours.
+
+  "Levels" are the Indian air-quality bands: Good, Satisfactory, Moderate,
+  Poor, Very Poor, Severe.
+
+
+HONEST NOTES
+  - Accuracy drops for forecasts further ahead (normal for air pollution).
+  - Exact-level accuracy is a strict measure; "within one level" is lenient.
+  - The graph (neighbouring stations) gives a modest gain over the plain
+    Transformer (26.9 vs 27.4 ug/m3).
+  - Live readings are converted from AQI to ug/m3, so they can differ a
+    little from CPCB's own files.
