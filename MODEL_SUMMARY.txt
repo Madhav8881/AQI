@@ -65,14 +65,29 @@ TRAINING AND TEST DATA  (test run used to measure how good the model is)
   Sep 2026 (about 32,500 samples) so they know the latest conditions.
 
 
+HOW TO READ THE NUMBERS (ug/m3 vs %)
+  ug/m3 (micrograms per cubic metre) = the UNIT of PM2.5: how many
+    micrograms of tiny particles are in one cubic metre of air.
+    Example: "PM2.5 is 180 ug/m3". An error of 27 ug/m3 means the forecast
+    was 27 units away from the real reading (e.g. predicted 180, real 153).
+  % = a share or comparison, NOT a unit of pollution.
+    "Correct AQI level 58%" = 58 out of 100 forecasts were in the right level.
+    "25% better" = our error is 25% smaller than the basic forecast's error.
+  Error as a %: average PM2.5 in the test period was about 99 ug/m3, so an
+    average error of 27 ug/m3 is about 27% of the usual pollution level
+    (about 15% for forecasts 1 hour ahead).
+  R2 score = how much of the ups and downs of pollution the model explains
+    (100% = perfect).
+
+
 HOW WELL THE MODEL DOES ON THE 2-YEAR TEST DATA
   Averaged over all forecast times (1-24 hours ahead):
 
-                               GAT-Transformer    Basic forecast*
+                                     GAT-Transformer    Basic forecast*
     Explains PM2.5 changes (R2)      75%                57%
     Average error                    27 ug/m3           36 ug/m3
-    Correct AQI level         58%                51%
-    AQI level within +-1          94%                87%
+    Correct AQI level                58%                51%
+    AQI level within +-1             94%                87%
 
   * Basic forecast = just repeats the current reading (no learning).
 

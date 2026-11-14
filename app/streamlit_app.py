@@ -592,6 +592,18 @@ def render_scorecard():
     k[4].metric("RMSE", f"{a['RMSE']:.1f} µg/m³", f"{a['RMSE'] - b['RMSE']:.1f}", delta_color="inverse",
                 help="Like MAE but punishes big misses more. Lower is better.")
 
+    st.info(
+        "**How to read these numbers**\n\n"
+        "- **µg/m³** is the unit of PM2.5: micrograms of tiny particles in one cubic metre of air. "
+        "Example: *PM2.5 is 180 µg/m³*. An error of 27 µg/m³ means the forecast was 27 units away from the "
+        "real reading (e.g. predicted 180, real 153).\n"
+        "- **%** is a share or comparison, not a unit of pollution. *Correct AQI level 58%* = 58 out of 100 "
+        "forecasts were in the right level. *25% better* = our error is 25% smaller than the basic forecast's.\n"
+        f"- **Error as a %:** average PM2.5 in the test period was about 99 µg/m³, so an average error of "
+        f"{a['MAE']:.0f} µg/m³ is about **{a['MAE'] / 99:.0%} of the usual pollution level** "
+        "(about 15% for forecasts 1 hour ahead).\n"
+        "- **R² score:** how much of the ups and downs of pollution the model explains (100% = perfect).")
+
     t = sc[sc["Model"] == main].copy()
     t["Hours ahead"] = t["Hours ahead"].map(lambda h: "All (1–24 h)" if h == "All" else f"{h} h")
     for col in ("R²", "Correct AQI level", "AQI level within ±1"):
