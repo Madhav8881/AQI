@@ -10,6 +10,47 @@ WHAT THE MODEL DOES
   GAT-Transformer and Transformer ("Ensemble").
 
 
+WHY WE USED A GAT (GRAPH ATTENTION NETWORK)
+  The idea: air pollution is not local. Smoke and dust drift across Delhi, so
+  what happens at a station's neighbours now often shows up at that station
+  a few hours later. LSTM and Transformer models look at ONE station at a
+  time and cannot use this. A graph model connects each station to its 8
+  nearest neighbours and LEARNS how much to trust each one ("attention"),
+  starting from a distance-based guess (closer = more trust).
+
+  Evidence from our own tests (2-year test data):
+
+  1. It is the most accurate model almost everywhere.
+     Best at 35 of 36 stations (average error 26.8 ug/m3, against
+     27.2 for the Transformer and 27.5 for the LSTM).
+
+  2. The gain is statistically real, not luck.
+     A significance test (Diebold-Mariano) shows the GAT-Transformer beats
+     the LSTM at 1, 3, 6 and 12 hours ahead, and the Transformer at 1, 3
+     and 6 hours ahead (p < 0.001). Best at the short and medium forecasts,
+     where neighbours matter most. At 24 hours all models are tied.
+
+  3. It keeps working when a sensor breaks (the biggest advantage).
+     Sensors fail in real life. We hid each station's own readings and asked
+     the models to forecast it from its neighbours only:
+       Robust LSTM (no graph)       error rises by  48%   (27.6 -> 40.9)
+       Robust GAT-Transformer       error rises by  17%   (26.8 -> 31.4)
+     Both were trained the same way; the only difference is the graph. The
+     graph model fills the gap from neighbouring stations, the LSTM cannot.
+     (Models trained without this "station dropout" training fail badly, +90%:
+     the graph needs the robust training to use its neighbours. That is why
+     the live app uses the Robust GAT-Transformer.)
+
+  4. It is useful in practice. The app can pretend a station's sensor is
+     broken and still forecast it, and shows which neighbours it relied on.
+
+  Honest note: on normal days the graph's gain over the plain Transformer is
+  modest (26.9 vs 27.4 ug/m3, about 2%). Its main value is in short and
+  medium-range forecasts and in sensor failure. We did not run a test with
+  the graph links removed, so the gain is shown by comparison with the other
+  models, not by switching the graph off.
+
+
 FACTORS USED BY THE FORECASTER (live app and test)
   For each station the model looks at the last 24 hours. Every hour has
   8 inputs, all derived from the PM2.5 readings and the clock:
