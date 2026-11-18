@@ -1,0 +1,16 @@
+{
+ "trained_on_all": true,
+ "origins": 32506,
+ "station_dropout": 0.0,
+ "history_dropout": 0.5,
+ "epochs": 3,
+ "seconds": 229.1,
+ "params": 72421,
+ "history": {
+  "train": [
+   0.09375389592014684,
+   0.09491137260034288,
+   0.09372631202234355
+  ]
+ }
+}

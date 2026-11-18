@@ -1,7 +1,12 @@
-numpy
-pandas
-matplotlib
-seaborn
-scikit-learn
-torch
-jupyter
+# Python 3.12 (tested with 3.12.12). Versions below are the ones the project was tested with;
+# the minimums in brackets are the oldest versions expected to work.
+numpy==2.5.4           # (>=2.0)
+pandas==3.1.0          # (>=2.2)
+torch==2.15.0          # (>=2.3)  CPU build is enough
+scikit-learn==1.9.1    # (>=1.4)
+scipy==1.18.1          # (>=1.11) significance test
+matplotlib==3.11.2     # (>=3.8)  notebook plots
+streamlit==1.67.0      # (>=1.50) web app
+plotly==7.1.0          # (>=6.0)  interactive charts / map
+pyarrow==26.0.1        # (>=15)   fast data loading for Streamlit
+jupyter==1.1.1         # notebook (optional)

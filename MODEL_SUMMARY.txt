@@ -1,0 +1,227 @@
+DELHI AIR POLLUTION FORECASTER - PROJECT SUMMARY
+================================================
+(Written so that anyone can follow it, even without knowing the project.)
+
+
+1. WHAT IS THIS PROJECT?
+------------------------
+Delhi has some of the most polluted air in the world. This project is a
+computer program (a deep-learning model) that FORECASTS how polluted the air
+will be at 36 places in Delhi over the next 24 hours.
+
+  - Input : the last 24 hours of pollution readings from the 36 stations.
+  - Output: the expected pollution at each station 1, 3, 6, 12 and 24 hours
+            from now.
+  - Also  : a web app where anyone can pick a station, see the forecast on a
+            map, read health advice, and check how right past forecasts were.
+
+What is "PM2.5"?
+  PM2.5 = tiny dust and smoke particles in the air, smaller than 2.5
+  micrometres (about 30 times thinner than a human hair). They go deep into
+  the lungs, so a higher number means dirtier, more harmful air.
+  It is measured in "ug/m3" (micrograms per cubic metre of air).
+  Example: 25 = clean, 100 = unhealthy for many people, 300+ = severe.
+
+What is "AQI level"?
+  India groups PM2.5 into six colour-coded levels:
+  Good, Satisfactory, Moderate, Poor, Very Poor, Severe.
+
+
+2. HOW DOES IT WORK? (in simple steps)
+--------------------------------------
+  Step 1  Collect: years of real hourly readings from 36 monitoring stations.
+  Step 2  Clean: remove broken values, fill small gaps (using only past data).
+  Step 3  Teach: show the model the past, one 24-hour window at a time, and let
+          it learn "when the last day looked like this, the next hours looked
+          like that".
+  Step 4  Test: check it on a period it has NEVER seen (the last 2 years).
+  Step 5  Use: the app feeds it today's live readings and shows the forecast.
+
+The main model is called a GAT-Transformer. In plain words:
+  - Transformer part = learns the pattern over time (morning rush, night
+    build-up, rising or falling trend).
+  - GAT part = lets each station "listen" to its nearby stations, because
+    pollution drifts from one area of the city to another.
+We compare it with simpler models (see section 7) to prove it is better.
+
+
+3. THE DATA
+-----------
+  What : real hourly PM2.5 readings from 36 Delhi air-quality stations
+         (government networks CPCB, DPCC and IMD).
+  When : January 2023 to September 2026 (32,856 hours per station).
+  Where from:
+    - XKDR Air Quality API (Jan 2023 - Aug 2025)
+        file: data/raw/delhi_pm25_2023_2025_raw.csv
+    - Kaggle dataset "Delhi Air Quality CPCB Hourly 2010-2026"
+        (yug201/delhi-air-quality-cpcb-hourly-2010-2026), used for
+        Jan 2025 - Sep 2026
+        file: data/raw/delhi_pm25_cpcb_2025_2026.csv
+      The two sources matched exactly on 117,055 readings they share.
+  Quality: 93.5% of the values are real measurements. The rest were filled
+           in using only earlier readings (never future ones).
+  Live data (for the "Prediction vs reality" page): readings from the World
+         Air Quality Index website (aqicn.org), collected hourly.
+
+
+4. WHAT THE MODEL USES TO FORECAST (the "factors")
+--------------------------------------------------
+For each station it looks at the last 24 hours. For every hour it uses:
+  1. The PM2.5 reading.
+  2. Whether that reading was really measured or filled in.
+  3. Time of day   - captures traffic and night-time patterns.
+  4. Day of week   - weekday vs weekend activity.
+  5. Time of year  - captures seasons (winter smog, monsoon cleaning).
+It also uses:
+  - Which station it is (each station has its own typical level).
+  - The 8 nearest stations, weighted by distance (the "graph").
+  - Whether pollution has been rising or falling over the last day.
+
+NOT used:
+  - Weather (temperature, humidity, pressure, wind). We tested it: it
+    improved forecasts by only 2-3%, so it was left out to keep things simple.
+  - Wind direction and other pollutants (left out by choice).
+  - Fires, traffic counts, festivals, rain forecasts.
+Because of this, forecasts far ahead (12-24 hours) are less accurate, and
+sudden events (Diwali fireworks, a change of wind) can be missed.
+
+
+5. HOW IT WAS TRAINED AND TESTED
+--------------------------------
+The data is split by TIME, like real use (train on the past, predict the
+future):
+
+  Training    Jan 2023 - Jun 2024    12,905 samples  (the model learns here)
+  Validation  Jul 2024 - Sep 2024     2,184 samples  (used to pick the best
+                                                       settings)
+  TEST        Oct 2024 - Sep 2026    17,393 samples  (~2 years, never seen,
+                                                       used only to score it)
+
+  - Each model was trained 3 times with different random starts, and the
+    results are averaged, so the score is not a lucky one.
+  - For the live app, the models were trained again on ALL data up to
+    Sep 2026, so they know the latest conditions. Nothing is re-trained
+    day by day.
+
+
+6. HOW GOOD IS IT?  (scored on the 2 unseen test years)
+-------------------------------------------------------
+Quick summary in words:
+  - It explains about 75% of how Delhi's pollution goes up and down.
+  - On average its forecast is off by about 27 ug/m3, which is 25% better
+    than the basic forecast (36 ug/m3).
+  - 1 hour ahead it names the correct AQI level 74% of the time, and is
+    right or only one level off 98.5% of the time.
+  - Overall (1 to 24 hours ahead) it is right or only one level off 94% of
+    the time.
+
+Details (all forecast times together):
+
+                                      Our model         Basic forecast*
+                                      (GAT-Transformer)
+  How much of the changes it explains   75%               57%
+  Average error                         27 ug/m3          36 ug/m3
+  Correct AQI level                     58%               51%
+  Correct AQI level or one level off    94%               87%
+
+  * Basic forecast = simply repeats the current reading ("tomorrow will be
+    like now"). It needs no learning. Any useful model must beat it.
+
+By how far ahead:
+
+  Hours ahead   Correct level   Right or 1 off   Average error   Explained
+       1             74%            98.5%          14 ug/m3         93%
+       3             61%            95.6%          24 ug/m3         82%
+       6             54%            93.2%          29 ug/m3         72%
+      12             51%            91.3%          33 ug/m3         66%
+      24             49%            90.4%          35 ug/m3         62%
+
+  The further ahead, the harder it is - this is normal for pollution.
+
+Only the most recent period (2026): our model's error is 22.0 ug/m3 vs 29.1
+for the basic forecast.
+
+
+7. WHY WE USED A GAT (GRAPH ATTENTION NETWORK)
+----------------------------------------------
+The idea: air pollution is not local. Smoke and dust drift across the city, so
+what is happening at a station's neighbours now often shows up at that station
+a few hours later. LSTM and Transformer models look at ONE station at a time
+and cannot use this. The graph model connects each station to its 8 nearest
+neighbours and LEARNS how much to trust each one ("attention"), starting from
+a distance-based guess (closer = more trust).
+
+Models compared (error in ug/m3, lower is better):
+  Basic forecast 36.1 | LSTM 27.7 | Transformer 27.4 | GAT-Transformer 26.9
+
+Evidence from our own tests:
+
+  1. It is the most accurate model almost everywhere.
+     Best at 35 of the 36 stations (average error 26.8 ug/m3, against 27.2
+     for the Transformer and 27.5 for the LSTM).
+
+  2. The gain is real, not luck.
+     A statistical test (Diebold-Mariano) shows it beats the LSTM at 1, 3, 6
+     and 12 hours ahead, and the Transformer at 1, 3 and 6 hours ahead
+     (p < 0.001). At 24 hours all models are about equal.
+
+  3. It keeps working when a sensor breaks (the biggest advantage).
+     Sensors fail in real life. We hid each station's own readings and asked
+     the models to forecast it from its neighbours only:
+        Robust LSTM (no graph)       error rises by 48%   (27.6 -> 40.9)
+        Robust GAT-Transformer       error rises by 17%   (26.8 -> 31.4)
+     Both were trained the same way; the only difference is the graph. The
+     graph model fills the gap from nearby stations; the LSTM cannot.
+     ("Robust" = trained with random stations switched off. Without this, all
+     models fail badly when a sensor breaks, about +90%. That is why the live
+     app uses the Robust GAT-Transformer.)
+
+  4. It is useful in practice. In the app you can pretend a station's sensor
+     is broken and it still forecasts that station, and shows which
+     neighbours it relied on.
+
+  Honest note: on normal days the graph's gain over the plain Transformer is
+  modest (26.9 vs 27.4 ug/m3, about 2%). Its main value is in short and
+  medium-range forecasts and in sensor failure. We did not run a test with the
+  graph links removed, so the gain is shown by comparison with the other
+  models, not by switching the graph off.
+
+
+8. HOW TO READ THE NUMBERS (ug/m3 vs %)
+---------------------------------------
+  ug/m3 = the UNIT of pollution (micrograms of particles per cubic metre).
+    "An error of 27 ug/m3" means the forecast was 27 units away from reality
+    (e.g. predicted 180, real 153).
+  %     = a share or comparison, NOT a unit of pollution.
+    "Correct AQI level 58%" = 58 out of 100 forecasts were in the right level.
+    "25% better" = our error is 25% smaller than the basic forecast's error.
+  Error as a %: the average pollution in the test period was about 99 ug/m3,
+    so an average error of 27 ug/m3 is about 27% of the usual level (about
+    15% for forecasts 1 hour ahead).
+  "Explained" (R2) = how much of the ups and downs of pollution the model
+    captures. 100% = perfect, 0% = no better than guessing the average.
+  "Correct level" is strict: predicting 59 when the truth is 61 counts as
+    wrong if the two fall in different levels. "Right or 1 off" is lenient.
+
+
+9. THE APP (what a user sees)
+-----------------------------
+  Today                    live pollution at every station on a map, health
+                           advice, and the forecast for the next 24 hours.
+  Prediction vs reality    what the model predicted compared with what the
+                           sensors later measured.
+  How good is it?          the test results and model comparison above.
+  About                    a plain-language explanation.
+
+  To run it:  python -m streamlit run app/streamlit_app.py
+  (full install and training instructions are in README.md)
+
+
+10. LIMITATIONS (honest notes)
+------------------------------
+  - Accuracy drops for forecasts further ahead (normal for air pollution).
+  - Without weather information, sudden changes can be missed.
+  - Live readings are converted from AQI values to ug/m3, so they can differ
+    slightly from the official CPCB files.
+  - Two stations (ITO, Shadipur) are not available in the live feed.
+  - The live comparison covers only the days the collector was running.

@@ -1,294 +1,360 @@
-# Spatiotemporal Air Quality Forecasting in Delhi NCR
-### Multi-Horizon $PM_{2.5}$ Prediction Using Graph Attention & Transformer Networks
+# Delhi PM2.5 Forecaster
+### Spatiotemporal air-quality forecasting with Graph Attention + Transformer networks
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Status: Reproducible](https://img.shields.io/badge/Status-Reproducible%20Benchmark-brightgreen.svg)]()
-
-An end-to-end, reproducible deep learning framework for multi-horizon ambient particulate matter ($PM_{2.5}$) forecasting across the National Capital Region (NCR) of Delhi, India. 
-
-This repository benchmarks naive **Persistence**, a **Temporal LSTM**, a **Temporal Transformer**, and a hybrid **Spatiotemporal GAT-Transformer** over a multi-year hourly air quality dataset collected from the Continuous Ambient Air Quality Monitoring (CAAQM) network.
+Forecasts hourly PM2.5 at **36 monitoring stations across Delhi** for the next **1, 3, 6, 12 and 24 hours**.
+Trained on real measurements from Jan 2023 – Jun 2024 and tested on **two full unseen years
+(Oct 2024 – Sep 2026)**. Comes with an interactive **Streamlit app** that shows **live PM2.5 for Delhi
+right now**, forecasts the next 24 hours, and scores those live forecasts as the real readings arrive.
 
 ---
 
-## Table of Contents
-1. [Overview & Problem Statement](#overview--problem-statement)
-2. [Key Highlights](#key-highlights)
-3. [Model Architectures & Pipeline](#model-architectures--pipeline)
-4. [Monitoring Stations & Spatial Graph](#monitoring-stations--spatial-graph)
-5. [Benchmark Results](#benchmark-results)
-6. [Repository Structure](#repository-structure)
-7. [Installation & Setup](#installation--setup)
-8. [Quick Start & Usage](#quick-start--usage)
-9. [Data Integrity & Reproducibility](#data-integrity--reproducibility)
-10. [Citation & Acknowledgments](#citation--acknowledgments)
+## Highlights
+
+- **Real data only.** Hourly PM2.5 from 36 CPCB / DPCC / IMD stations: XKDR Air Quality API (2023 – Aug 2025) and the CPCB hourly files (2025 – Sep 2026). The two sources agree exactly on all 117,055 overlapping readings. No synthetic values.
+- **Graph neural network.** Stations form a graph (8 nearest neighbours, distance-weighted). A Graph Attention Network learns, hour by hour, which neighbouring stations matter.
+- **Rigorous evaluation.** Chronological split, scalers fitted on training data only, causal (past-only) gap filling, metrics on real observations only, 3 random seeds per model, Diebold–Mariano significance tests, and a test set that runs **more than two years past the training data**.
+- **Robust to sensor failure.** The *Robust GAT-Transformer* forecasts a station whose sensor is down with **only +17% error** (vs +48% for an equally trained LSTM), by learning from its neighbours.
+- **Live mode, no maintenance.** Final models trained on all data up to Sep 2026 and fine-tuned once to forecast from just the current live readings. Open the app any time: it fetches live PM2.5, forecasts the next 24 hours, saves the forecast and scores it when the real readings arrive. No daily retraining.
 
 ---
 
-## Overview & Problem Statement
+## Results
 
-Air pollution in Delhi NCR constitutes a recurring, severe environmental hazard driven by high-density vehicular traffic, construction dust, industrial point sources, regional crop stubble burning, and seasonal meteorological thermal inversions.
+Test period: **Oct 2024 – Sep 2026** (17,393 hourly forecast origins × 36 stations), never seen in
+training. Real observations only. Neural models: mean ± std over 3 seeds. MAE/RMSE in µg/m³.
 
-Accurate air quality forecasting is fundamentally a **spatiotemporal** problem:
-* **Temporal Dynamics:** Strict 24-hour diurnal rhythms (traffic rush hours, nocturnal planetary boundary-layer compression, temperature shifts) and long-term seasonal fluctuations.
-* **Spatial Advection & Dispersion:** Particulate matter ($PM_{2.5}$) is not static; it diffuses across municipal neighborhoods influenced by geographical distances and micro-meteorological corridors.
+| Model | MAE ↓ | RMSE ↓ | R² ↑ | AQI-category accuracy ↑ |
+|---|---|---|---|---|
+| Persistence (last value) | 36.06 | 63.33 | 0.566 | 51.2% |
+| Seasonal naive (same hour yesterday) | 38.77 | 66.76 | 0.518 | 47.8% |
+| LSTM | 27.65 ± 0.01 | 48.77 ± 0.14 | 0.743 | 56.8% |
+| Transformer | 27.35 ± 0.22 | 47.82 ± 0.23 | **0.753** | 57.2% |
+| **GAT-Transformer** | **26.94 ± 0.10** | 47.95 ± 0.33 | 0.751 | **57.8%** |
+| Robust LSTM | 27.61 ± 0.16 | 48.60 ± 0.30 | 0.744 | 56.9% |
+| Robust GAT-Transformer | 26.96 ± 0.29 | **47.81 ± 0.37** | **0.753** | 57.6% |
 
-Traditional time-series models (e.g., ARIMA, standalone LSTMs) evaluate each monitoring station in isolation, ignoring the spatial interactions among neighboring stations. This project bridges that gap by modeling Delhi's sensor network as a spatial graph, leveraging **Graph Attention Networks (GAT)** to dynamically learn inter-station spatial correlations and a **Transformer Encoder** to model temporal sequence dependencies.
+*Plain-language reading of the table:* **MAE** is the average error in µg/m³ (the unit of PM2.5; lower is better).
+**R²** is the share of PM2.5's ups and downs the model explains. **Persistence** is the *basic forecast* that just
+repeats the latest reading; the average PM2.5 in the test period was about 99 µg/m³.
+
+**Headline scorecard, GAT-Transformer, all lead times:**
+
+| | GAT-Transformer | Basic forecast (Persistence) |
+|---|---|---|
+| R² (changes explained) | **75%** | 57% |
+| Average error (MAE) | **26.9 µg/m³** (~27% of the average level) | 36.1 µg/m³ |
+| Correct AQI level (Good, Moderate, Poor…) | **58%** | 51% |
+| AQI level within ±1 | **94%** | 87% |
+
+At +1 h: R² 93%, correct AQI level 74%, within ±1 level 98.5%. At +24 h: R² 62%, correct level 49%, within ±1 90%.
+The GAT-Transformer has the lowest error at 35 of the 36 stations.
+
+**MAE by lead time**
+
+| Model | +1h | +3h | +6h | +12h | +24h |
+|---|---|---|---|---|---|
+| Persistence | 16.02 | 30.91 | 43.32 | 51.33 | 38.74 |
+| LSTM | 14.74 | 24.80 | 30.27 | 33.69 | 34.79 |
+| Transformer | 14.72 | 24.43 | 29.88 | 33.06 | 34.66 |
+| **GAT-Transformer** | **14.34** | **23.65** | 29.25 | **32.85** | 34.63 |
+| Robust GAT-Transformer | 14.43 | 23.68 | **29.23** | 32.98 | **34.54** |
+
+**MAE by period / season**
+
+| Model | Test year 1 (Oct 24–Sep 25) | Test year 2 (Oct 25–Sep 26) | **2026 only** | Winter (Oct–Feb) | Summer/Monsoon (Apr–Sep) | Severe (> 250) |
+|---|---|---|---|---|---|---|
+| Persistence | 35.47 | 36.67 | 29.10 | 54.40 | 20.90 | 106.97 |
+| LSTM | 27.56 | 27.74 | 22.46 | 41.81 | 16.56 | 93.30 |
+| Transformer | 27.25 | 27.45 | 22.27 | 41.06 | 16.57 | **90.30** |
+| **GAT-Transformer** | 26.86 | **27.02** | **21.96** | 40.53 | **16.28** | 92.13 |
+| Robust GAT-Transformer | **26.76** | 27.18 | 22.04 | **40.49** | 16.33 | 91.40 |
+
+- **About 25% lower error than persistence**, and **no decline in accuracy in the second test year**: in 2026 the model is still as good as right after training.
+- **Significance (Diebold–Mariano):** the GAT-Transformer beats the LSTM at +1h, +3h, +6h and +12h, and the Transformer at +1h, +3h and +6h (all p < 0.001). At +24h the neural models are statistically tied.
+
+### Sensor-failure test
+
+Each station's own last 24 h of readings is hidden in turn; the model must forecast that station anyway.
+
+| Model | MAE, sensor working | MAE, sensor failed | Error increase |
+|---|---|---|---|
+| Station long-term average | — | 69.8 | — |
+| LSTM | 27.6 | 52.6 | +90% |
+| Transformer | 27.3 | 54.2 | +98% |
+| GAT-Transformer | 26.9 | 51.3 | +91% |
+| Robust LSTM | 27.6 | 40.9 | +48% |
+| **Robust GAT-Transformer** | **26.8** | **31.4** | **+17%** |
+
+"Robust" models are trained with *station dropout*: about 15% of stations have their whole input window
+hidden in each training sample. The LSTM can only fall back on time-of-day / season patterns, while the
+GAT learns to rebuild the missing station from its neighbours (**+1h error 24.5 vs 41.1 µg/m³**), at no cost
+to normal accuracy.
 
 ---
 
-## Key Highlights
+## Final models for live use
 
-* **Direct Multi-Horizon Forecasting:** Simultaneously projects $PM_{2.5}$ concentrations at $+1\text{h}$, $+3\text{h}$, $+6\text{h}$, and $+12\text{h}$ horizons from a 24-hour lookback window.
-* **Pure Native PyTorch GAT:** Implements multi-head Graph Attention Networks entirely in standard PyTorch, eliminating heavy external graph library dependencies (such as PyG or DGL) and ensuring seamless cross-platform portability.
-* **Rigorous Empirical Benchmarking:** Evaluates four models under identical, non-overlapping chronological data partitions (70% Train, 15% Validation, 15% Test) with strict data leakage prevention.
-* **Pre-Trained Checkpoints Included:** Serialized model weights (`checkpoints/`) enable immediate evaluation, metric generation, and visualization without requiring hours of GPU re-training.
-* **Dual Execution Modes:** Provides both step-by-step interactive Jupyter notebooks (`notebooks/`) and modular command-line scripts (`src/`).
+The models above were evaluated on two unseen years. For deployment, the same architectures were
+**retrained once and finally trained on all available data, Jan 2023 – Sep 2026** (three winters).
+Jul – Sep 2026 was first held out to choose the stopping point, then added for a last short training
+pass (3 epochs, decaying learning rate). They are never
+retrained during use: each forecast just reads the latest live readings. Because the final models have
+now seen every month we have, their honest test is the live scoring in the app; the hold-out results
+above remain the evidence that the method generalises.
+
+**Forecasting right after start-up.** The live feed only provides the current hour, so when the app is
+opened without a collector running the model sees little history. A one-time fine-tuning with *history
+dropout* (in half the training samples only the last 1–23 hours are visible) fixes this.
+MAE on Jul – Sep 2026, µg/m³, measured before the last all-data pass (while those months were still
+held out; the monsoon season, and the period used to pick the best fine-tuning round, so slightly
+optimistic):
+
+| Model | 24 h history | 6 h | 3 h | **1 h** |
+|---|---|---|---|---|
+| Persistence | 16.4 | 16.4 | 16.4 | 16.4 |
+| GAT-Transformer, before fine-tuning | 13.6 | 15.9 | 16.1 | 16.3 |
+| **GAT-Transformer, fine-tuned** | **13.6** | **14.0** | **14.2** | **14.2** |
+| Robust GAT-Transformer, fine-tuned | 13.6 | 14.1 | 14.2 | 14.3 |
+| Transformer, fine-tuned | 13.7 | 14.2 | 14.3 | 14.4 |
+| LSTM, fine-tuned | 13.8 | 14.8 | 15.7 | 14.7 |
+
+Full-history accuracy is unchanged; with only the current hour the GAT-Transformer error drops from
+16.3 (no better than persistence) to 14.2.
+
+**Ensemble.** Live forecasts also include the average of GAT-Transformer, Robust GAT-Transformer and
+Transformer. On the two-year held-out test it is ~1% better than the best single model
+(MAE 26.54 vs 26.77 µg/m³), and better or equal at 4 of 5 lead times.
+
+**Weather was tested and left out.** Adding Open-Meteo weather (past weather plus the forecast issued a
+day earlier, so no peeking at the future) to correct the GAT-Transformer's forecasts improved 6–24 h
+forecasts by only ~2–3% on held-out months of 2025, and did not help at +1 h — recent PM2.5 already
+reflects current weather. Open-Meteo weather itself agreed well with CPCB station sensors (temperature
+r ≈ 0.96, humidity r ≈ 0.9, no time offset).
+
+### Honest limitations
+- **Winter is harder than summer** (MAE ≈ 40 vs 16): smog episodes change fast, and only one full Oct–Dec season is in the training data.
+- **+24h forecasts** are only modestly better than persistence; without weather inputs, day-ahead PM2.5 is fundamentally hard.
+- **Live mode** uses WAQI's US-EPA (2016) AQI values converted back to µg/m³ (capped near 500 µg/m³). Two stations (ITO, Shadipur) are not in the WAQI feed and appear as offline.
 
 ---
 
-## Model Architectures & Pipeline
+## Data
 
+| | |
+|---|---|
+| Sources | [XKDR Air Quality API](https://airquality.xkdr.org) (Jan 2023 – Aug 2025); CPCB hourly station files via the public Kaggle mirror [*Delhi Air Quality: CPCB Station Data (2010–2026)*](https://www.kaggle.com/datasets/yug201/delhi-air-quality-cpcb-hourly-2010-2026) (Jan 2025 – Sep 2026) |
+| Stations | 36 Delhi stations with ≥ 70% real-data coverage |
+| Period | 1 Jan 2023 – 30 Sep 2026, hourly (32,856 hours) |
+| Coverage | 93.5% of station-hours have a real reading |
+| Cleaning | Non-physical values (≤ 0 or > 1000) and stuck sensors (≥ 12 identical consecutive hours) removed |
+
+| Split | Period | Forecast origins |
+|---|---|---|
+| Train | Jan 2023 – Jun 2024 | 12,905 |
+| Validation | Jul – Sep 2024 | 2,184 |
+| Test | Oct 2024 – Sep 2026 | 17,393 |
+
+The split is **by time**: every station appears in every split, and the models are always tested on months
+they never saw.
+
+## Method
+
+**Inputs per station per hour (8 features):** standardised PM2.5, an `observed` flag (1 = real reading,
+0 = filled), and sine/cosine of hour-of-day, day-of-week and day-of-year. 24-hour lookback.
+
+**No leakage:** per-station mean/std fitted on training data only; input gaps filled by forward-fill
+(≤ 24 h) then station mean, never using future values; loss and metrics ignore unobserved targets.
+
+**Graph:** Haversine distances between stations; each station links to its 8 nearest neighbours with
+weight `exp(-(d/σ)²)`, σ = std of pairwise distances (8.1 km). The GAT adds `log(weight)` to its attention
+scores as a distance prior that it can learn to override.
+
+**Models** (all neural models share station embeddings and residual forecasting, so the comparison is fair):
+
+| Model | Idea | Parameters |
+|---|---|---|
+| Persistence | Last observed value | 0 |
+| Seasonal naive | Same hour, previous day | 0 |
+| LSTM | 2-layer LSTM per station | 72k |
+| Transformer | 2-layer Transformer encoder per station | 74k |
+| **GAT-Transformer** | Graph attention across stations at every hour → temporal Transformer → graph attention on the summary → multi-horizon head | 91k |
+| Robust variants | Same architectures + station dropout (p = 0.15) during training | — |
+
+**Training:** AdamW (lr 1e-3, wd 1e-4), masked Huber loss, ReduceLROnPlateau, early stopping on
+validation (patience 4, max 20 epochs), each epoch on a random 50% of training windows, 3 seeds per model.
+Trained on CPU.
+
+---
+
+## Setup and usage
+
+### 1. Requirements
+- **Python 3.12** (tested with 3.12.12; 3.10 – 3.12 should work)
+- Windows, Linux or macOS. **No GPU needed** — everything runs on CPU.
+- About 1 GB of disk space (mostly PyTorch).
+- Libraries (all listed in [`requirements.txt`](requirements.txt)):
+
+| Library | Version tested | Used for |
+|---|---|---|
+| numpy | 2.5.4 | arrays |
+| pandas | 3.1.0 | data tables |
+| torch (PyTorch) | 2.15.0 | deep-learning models |
+| scikit-learn | 1.9.1 | metrics |
+| scipy | 1.18.1 | significance test |
+| matplotlib | 3.11.2 | notebook plots |
+| streamlit | 1.67.0 | web app |
+| plotly | 7.1.0 | interactive charts and map |
+| pyarrow | 26.0.1 | fast data loading in the app |
+| jupyter | 1.1.1 | notebook (optional) |
+
+### 2. Install the dependencies
+Run these in a terminal **inside the project folder**:
+
+```powershell
+# Windows (PowerShell)
+python -m venv .venv                 # create a virtual environment
+.venv\Scripts\activate               # activate it
+pip install -r requirements.txt      # install all libraries
 ```
-+--------------------------------------------------------------------------------------------------+
-|                                    INPUT DATA TENSOR: [B, 24, 12, 5]                             |
-|                           (Batch, 24 Hours Lookback, 12 Stations, 5 Features)                    |
-+--------------------------------------------------------------------------------------------------+
-          |                                  |                                  |
-          v                                  v                                  v
-+-----------------------+          +-----------------------+          +--------------------+
-| 1. PERSISTENCE        |          | 2. TEMPORAL LSTM      |          | 3. TEMPORAL TRANS. |
-| Naive Forward Repeat  |          | Independent 2-L LSTM  |          | Independent Trans. |
-| No Trainable Weights  |          | Param Count: 53,668   |          | Param Count: 71,076|
-+-----------------------+          +-----------------------+          +--------------------+
-          |                                  |                                  |
-          |                                  |                                  |
-          +----------------------------------+----------------------------------+
-                                             |
-                                             v
-                         +----------------------------------------+
-                         | 4. SPATIOTEMPORAL GAT-TRANSFORMER      |
-                         | Spatial GAT (t=0..23) + Temporal Trans |
-                         | Param Count: 75,428                    |
-                         +----------------------------------------+
-                                             |
-                                             v
-+--------------------------------------------------------------------------------------------------+
-|                                  OUTPUT FORECAST TENSOR: [B, 4, 12]                              |
-|                          (Batch, 4 Horizons: +1h, +3h, +6h, +12h, 12 Stations)                   |
-+--------------------------------------------------------------------------------------------------+
-```
 
-### Models Compared
-1. **Persistence Baseline:** Non-parametric benchmark that repeats the latest observed value at $t=23$ across all four horizons.
-2. **Temporal LSTM:** 2-layer LSTM ($d_{\text{hidden}}=64$, $\text{dropout}=0.1$) processing each station's sequence independently.
-3. **Temporal Transformer:** 2-layer Transformer encoder ($n_{\text{heads}}=4$, $d_{\text{model}}=64$, $d_{\text{ff}}=128$) with learnable temporal positional encodings.
-4. **Spatiotemporal GAT-Transformer:** Integrates a multi-head spatial GAT layer ($K=2$ heads) at every time step across the spatial graph, followed by a temporal Transformer encoder and a multi-horizon MLP projection head.
-
----
-
-## Monitoring Stations & Spatial Graph
-
-The network utilizes 12 continuous ambient air monitoring stations strategically chosen across all administrative zones of Delhi:
-
-| Zone | Station ID | Station Name | Latitude | Longitude |
-| :--- | :---: | :--- | :---: | :---: |
-| **East** | `site_301` | Anand Vihar | 28.6476 | 77.3158 |
-| **East** | `site_114` | IHBAS Dilshad Garden | 28.6812 | 77.3025 |
-| **Central** | `site_113` | Shadipur | 28.6515 | 77.1473 |
-| **Central** | `site_117` | ITO | 28.6286 | 77.2411 |
-| **Central** | `site_122` | Mandir Marg | 28.6364 | 77.2011 |
-| **North** | `site_118` | DTU (Delhi Technological Univ.) | 28.7501 | 77.1113 |
-| **North** | `site_1420` | Ashok Vihar | 28.6954 | 77.1817 |
-| **West** | `site_115` | NSIT Dwarka | 28.6091 | 77.0325 |
-| **West** | `site_125` | Punjabi Bagh | 28.6740 | 77.1310 |
-| **South** | `site_119` | Sirifort | 28.5504 | 77.2159 |
-| **South** | `site_124` | R K Puram | 28.5633 | 77.1869 |
-| **South** | `site_1428` | Okhla Phase-2 | 28.5308 | 77.2713 |
-
-### Graph Topology
-* **Distance Matrix:** Pairwise great-circle Haversine distances $D_{ij}$ (min: $4.95\text{ km}$, mean: $18.57\text{ km}$, max: $33.85\text{ km}$).
-* **Thresholded Gaussian Kernel Adjacency:**
-  $$A_{ij} = \exp\left(-\frac{D_{ij}^2}{\sigma^2}\right) \quad \text{for } D_{ij} \le 25\text{ km}, \quad \text{else } 0$$
-  with self-loops $A_{ii} = 1.0$ and $\sigma \approx 8.2\text{ km}$.
-* **Input Features ($5$ per station per hour):** Normalized $PM_{2.5}$ (Z-score standardized on train set), $\sin/\cos$ hour of day (24h period), and $\sin/\cos$ day of week (7-day period).
-
----
-
-## Benchmark Results
-
-All models were evaluated on the held-out, unseen test period ($15\%$ chronological split) across all 12 stations simultaneously.
-
-### Overall Performance Comparison
-
-| Model | Overall MAE ($\mu\text{g/m}^3$) | Overall RMSE ($\mu\text{g/m}^3$) | Overall $R^2$ | Best Category |
-| :--- | :---: | :---: | :---: | :--- |
-| **Persistence** | 17.04 | 26.17 | 0.4623 | Baseline |
-| **LSTM** | 12.48 | **17.58** | **0.7574** | **Lowest RMSE, Highest $R^2$** |
-| **Transformer** | 12.75 | 17.69 | 0.7544 | Temporal Attention |
-| **GAT-Transformer** | **12.08** | 17.83 | 0.7506 | **Lowest MAE (Best Accuracy)** |
-
-### Horizon-by-Horizon MAE ($\mu\text{g/m}^3$)
-
-| Model | +1h MAE | +3h MAE | +6h MAE | +12h MAE | Consistency |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **Persistence** | 11.84 | 15.82 | 19.42 | 21.08 | Rapid error degradation |
-| **LSTM** | 10.60 | 11.94 | 13.17 | 14.22 | Smooth sequential control |
-| **Transformer** | 10.35 | 12.09 | 13.61 | 14.94 | Degrades at long horizons |
-| **GAT-Transformer** | **9.97** | **11.55** | **12.89** | **13.91** | **Best MAE across all 4 horizons** |
-
-> **Key Takeaway:** The Spatiotemporal GAT-Transformer achieves the lowest Mean Absolute Error across all four horizons, reducing $+1\text{h}$ prediction error below $10\,\mu\text{g/m}^3$. While GAT-Transformer provides superior median precision (MAE), the Temporal LSTM demonstrates strong resistance against outlier error spikes (lowest RMSE).
-
----
-
-## Repository Structure
-
-```text
-AQI/
-├── .env.example                               # Environment variable template
-├── .gitignore                                 # Git ignore patterns (virtual env, caches, logs)
-├── README.md                                  # Repository documentation & guide
-├── requirements.txt                           # Core dependencies
-├── Spatiotemporal_AQI_Forecasting.ipynb       # End-to-end presentation notebook
-├── PROJECT_OVERVIEW.txt                       # Project reference document
-├── TECHNICAL_ANALYSIS_AND_ARCHITECTURE_GUIDE.md # Technical specification & parameter guide
-│
-├── notebooks/                                 # Phase-by-phase reproducible notebooks
-│   ├── 01_Data_Acquisition.ipynb             # Data inspection & station directory
-│   ├── 02_Spatial_Graph.ipynb                # Distance matrix & graph topology
-│   ├── 03_Data_Preprocessing.ipynb           # Cleaning, imputation, sliding windows
-│   ├── 04_Model_Architectures.ipynb          # Model definitions & tensor forward pass tests
-│   └── 05_Training_and_Evaluation.ipynb      # Training execution & checkpoint evaluation
-│
-├── src/                                       # Modular Python source library
-│   ├── build_graph.py                         # Haversine distance & Gaussian adjacency
-│   ├── evaluate.py                            # Checkpoint evaluation & metric tables
-│   ├── fetch_measurements.py                  # CAAQM hourly measurement fetcher
-│   ├── fetch_stations.py                      # Station discovery & metadata extraction
-│   ├── models.py                              # PyTorch models (Persistence, LSTM, Trans, GAT)
-│   ├── preprocess.py                          # Imputation, cyclic features, tensors
-│   └── train_eval.py                          # Multi-model training loop & checkpointing
-│
-├── data/
-│   ├── raw/                                   # Source measurement CSVs & station records
-│   └── processed/                             # Tensors (.npz), matrices (.npy), scaler params
-│
-├── checkpoints/                               # Pre-trained PyTorch model checkpoints
-│   ├── best_gat_transformer.pt
-│   ├── best_lstm.pt
-│   └── best_transformer.pt
-│
-└── plots/                                     # Publication-quality charts & metric CSVs
-    ├── chronological_split_series.png
-    ├── forecast_comparison_time_series.png
-    ├── horizon_error_degradation.png
-    ├── horizon_metrics_comparison.csv
-    ├── overall_metrics_comparison.csv
-    ├── station_level_mae_comparison.png
-    ├── station_spatial_graph.png
-    └── training_loss_curves.png
-```
-
----
-
-## Installation & Setup
-
-### Prerequisites
-* Python 3.10 or higher
-* Recommended: Virtual environment (`venv` or `conda`)
-* GPU with CUDA support (optional, CPU execution supported out-of-the-box)
-
-### Step 1: Clone Repository
 ```bash
-git clone https://github.com/Madhav8881/AQI.git
-cd AQI
-```
-
-### Step 2: Create & Activate Virtual Environment
-```bash
-# On Linux / macOS:
+# Linux / macOS
 python3 -m venv .venv
 source .venv/bin/activate
-
-# On Windows (PowerShell):
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-### Step 3: Install Dependencies
-```bash
 pip install -r requirements.txt
 ```
 
-### Step 4: Environment Variables (Optional)
-If you wish to refresh live telemetry from the XKDR Air Quality API:
-```bash
-# Copy template and configure
-cp .env.example .env
+If PowerShell blocks the activate script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or skip
+activation and call the interpreter directly: `.venv\Scripts\python.exe ...`.
+
+### 3. Dataset
+**Nothing to download — the dataset is included in the repository:**
+
+| File | What it is |
+|---|---|
+| `data/raw/delhi_pm25_2023_2025_raw.csv` | Hourly PM2.5, 36 stations, Jan 2023 – Aug 2025 (XKDR Air Quality API) |
+| `data/raw/delhi_pm25_cpcb_2025_2026.csv` | Hourly PM2.5, Jan 2025 – Sep 2026 (CPCB files, Kaggle: [`yug201/delhi-air-quality-cpcb-hourly-2010-2026`](https://www.kaggle.com/datasets/yug201/delhi-air-quality-cpcb-hourly-2010-2026)) |
+| `data/raw/delhi_stations_metadata.csv` | Station names and coordinates |
+| `data/processed/dataset.npz` | Cleaned, model-ready data for the test run |
+| `data/processed/dataset_final.npz` | Same, for the final (live) models |
+
+**To download the data again yourself** (optional):
+1. XKDR data needs a free API key: put `XKDR_API_KEY=your_key` in a `.env` file in the project folder
+   (copy `.env.example` to `.env`).
+2. Run:
+   ```bash
+   cd src
+   python fetch_stations.py          # station list
+   python fetch_measurements.py      # 2023 – 2025 readings (XKDR, needs the key)
+   python fetch_kaggle_cpcb.py       # 2025 – 2026 readings (Kaggle CPCB files, no key or login needed)
+   ```
+   Files are saved to `data/raw/` with the names above. If you download the Kaggle dataset manually instead,
+   just run `fetch_kaggle_cpcb.py` — it builds `delhi_pm25_cpcb_2025_2026.csv` for you.
+
+**For live mode** (current readings), get a free token at
+[aqicn.org/data-platform/token](https://aqicn.org/data-platform/token) and add `WAQI_TOKEN=your_token` to `.env`.
+Without it the app still shows all test results; only the live tabs are empty.
+
+### 4. Run the project (main file)
+**Main file: [`app/streamlit_app.py`](app/streamlit_app.py)** — the trained models are included, so this works
+right after installing:
+
+```powershell
+python -m streamlit run app/streamlit_app.py
 ```
-Edit `.env` to supply your `XKDR_API_KEY` if running fresh data ingestion. (Bundled raw datasets and checkpoints allow complete execution without an API key).
+Then open **http://localhost:8501** in a browser. Tabs:
+- **📡 Today** – live PM2.5 at every station and the forecast for the next 24 hours
+- **🎯 Prediction vs reality** – live forecasts compared with what the sensors then measured
+- **🏆 How good is it?** – test results on two years of unseen data
+- **ℹ️ About** – plain-language explanation
+
+**Collect live data** (needed for "Prediction vs reality"): double-click `scripts\start_collector.bat`
+(Windows) or run `python src/live.py --loop`, and leave it running. It saves readings and forecasts every hour
+to `data/live/`.
+
+### 5. Train and test the models
+All commands run from the `src` folder. Training is on CPU.
+
+```bash
+cd src
+
+# (a) Prepare data
+python preprocess.py              # clean, split by time, build features  -> data/processed/dataset.npz
+python build_graph.py             # station graph (8 nearest neighbours)   -> data/processed/adjacency_matrix.npy
+
+# (b) TRAIN all models (LSTM, Transformer, GAT-Transformer + robust versions), 3 seeds each, then TEST
+python train_eval.py                       # ~5 h on CPU
+python train_eval.py --train-frac 0.25     # faster, slightly lower accuracy
+
+# (c) TEST only (uses the saved checkpoints, no training)
+python train_eval.py --eval-only           # -> results/metrics_*.csv, dm_test.csv, test_predictions.npz
+python sensor_failure_eval.py              # sensor-failure test -> results/sensor_failure.csv
+```
+
+**Final models for the live app** (trained on all data up to Sep 2026):
+```powershell
+# Windows PowerShell
+$env:AQI_RUN = "final"
+python preprocess.py
+python train_eval.py --seeds 0 --train-frac 0.25 --no-eval --models LSTM Transformer GAT-Transformer "Robust GAT-Transformer"
+python train_eval.py --seeds 0 --train-frac 0.25 --no-eval --epochs 8 --patience 3 --finetune --history-dropout 0.5 --models LSTM Transformer GAT-Transformer "Robust GAT-Transformer"
+python train_eval.py --seeds 0 --train-frac 0.25 --no-eval --epochs 3 --train-on-all --history-dropout 0.5 --models LSTM Transformer GAT-Transformer "Robust GAT-Transformer"
+Remove-Item Env:AQI_RUN
+```
+(Linux/macOS: put `AQI_RUN=final` in front of each command instead.)
+
+Useful `train_eval.py` options: `--models` (which models), `--seeds` (e.g. `0 1 2`), `--epochs`, `--patience`,
+`--train-frac` (share of training windows per epoch), `--threads` (CPU threads).
+
+**Notebook:** `Spatiotemporal_AQI_Forecasting.ipynb` walks through the data, graph, models and results
+(`jupyter notebook` to open it).
+
+### 6. Folder structure
+
+```text
+AQI/
+├── app/
+│   └── streamlit_app.py            # ★ MAIN FILE – the web app
+├── src/
+│   ├── config.py                   # settings: paths, dates, forecast hours, AQI levels
+│   ├── fetch_stations.py           # download station list (XKDR)
+│   ├── fetch_measurements.py       # download hourly PM2.5 2023-2025 (XKDR)
+│   ├── fetch_kaggle_cpcb.py        # download hourly PM2.5 2025-2026 (Kaggle CPCB)
+│   ├── preprocess.py               # cleaning, time split, features
+│   ├── build_graph.py              # station graph
+│   ├── data.py                     # loads the dataset, makes 24-h input windows
+│   ├── models.py                   # baselines, LSTM, Transformer, GAT-Transformer
+│   ├── train_eval.py               # TRAINING (and calls the test)
+│   ├── evaluate.py                 # TESTING: metrics, significance test
+│   ├── sensor_failure_eval.py      # sensor-failure test
+│   └── live.py                     # live readings, live forecasts, collector
+├── scripts/
+│   └── start_collector.bat         # double-click to collect live data (Windows)
+├── data/
+│   ├── raw/                        # downloaded dataset (CSV)
+│   ├── processed/                  # model-ready dataset, graph, scaler, station list
+│   └── live/                       # live readings and forecasts (created when collecting)
+├── checkpoints/                    # trained models from the test run (<model>_seed<k>.pt)
+│   └── final/                      # final models used by the live app
+├── results/                        # test metrics (CSV), test predictions, training logs
+├── Spatiotemporal_AQI_Forecasting.ipynb   # walkthrough notebook
+├── MODEL_SUMMARY.txt               # one-page summary of data, factors and results
+├── requirements.txt                # Python libraries
+├── .env.example                    # template for API keys (copy to .env)
+└── README.md
+```
 
 ---
 
-## Quick Start & Usage
+## Demo script (5 minutes)
 
-### Option A: Interactive Jupyter Notebooks
-Launch Jupyter:
-```bash
-jupyter notebook
-```
-* Open `Spatiotemporal_AQI_Forecasting.ipynb` for the complete end-to-end presentation.
-* Or open `notebooks/01_...` through `notebooks/05_...` to explore individual modular phases.
+1. **📡 Today** – Delhi's air right now on a map, health advice, and the next 24 hours for any station.
+2. **Sensor failure** – in the sidebar switch on *Pretend this station's sensor is broken*: the GAT model still
+   forecasts the station from its neighbours.
+3. **🎯 Prediction vs reality** – what the model predicted over the last few days vs what really happened.
+4. **🏆 How good is it?** – the scorecard on two unseen years (Oct 2024 – Sep 2026) and the comparison of models.
 
-*Note: Notebook 05 loads existing pre-trained checkpoints by default (`RUN_TRAINING = False`). Toggle to `True` only if you wish to retrain all models from scratch.*
-
-### Option B: Command-Line Pipeline Execution
-Run each pipeline stage directly from your terminal:
-
-```bash
-# 1. Build spatial graph (adjacency and distance matrices)
-python src/build_graph.py
-
-# 2. Preprocess data and generate sliding window tensors
-python src/preprocess.py
-
-# 3. Evaluate bundled model checkpoints and generate metric tables
-python src/evaluate.py
-```
-
-To retrain all deep learning models from scratch:
-```bash
-python src/train_eval.py
-```
-
----
-
-## Data Integrity & Reproducibility
-
-* **Source Observations:** Continuous ambient air quality monitoring measurements fetched from the Continuous Ambient Air Quality Monitoring (CAAQM) network provided by the XKDR Forum India Air Quality Database (`data/raw/delhi_pm25_2023_2024_raw.csv`).
-* **Extended Study Dataset:** `data/raw/delhi_pm25_2023_2026_raw.csv` extends the study timeline up to late October 2026 using realistic seasonal, diurnal, and station-specific offsets. For experiments restricted strictly to genuine historical sensor telemetry, toggle the source path in `src/preprocess.py` to `delhi_pm25_2023_2024_raw.csv`.
-* **Zero Leakage:** The Min-Max / Z-score scaler parameters are fitted strictly on the training partition ($70\%$) and applied forward to validation and test partitions.
-* **Deterministic Seeds:** Random number generators across NumPy and PyTorch are initialized with seed `42`.
-
----
-
-## Citation & Acknowledgments
-
-If you find this project or codebase helpful in your research or coursework, please consider citing:
-
-```bibtex
-@misc{delhi_aqi_gat_transformer_2026,
-  author       = {Project Contributors},
-  title        = {Spatiotemporal Air Quality Forecasting in Delhi NCR Using Graph Attention and Transformer Networks},
-  year         = {2026},
-  publisher    = {GitHub},
-  howpublished = {\url{https://github.com/Madhav8881/AQI}}
-}
-```
-
-### Acknowledgments
-* **Central Pollution Control Board (CPCB), India** for the CAAQM sensor network.
-* **XKDR Forum** for providing the structured India Air Quality Database API.
-* **PyTorch** and open-source scientific computing contributors.
+## Acknowledgements
+Central Pollution Control Board (CPCB), Delhi Pollution Control Committee (DPCC) and India
+Meteorological Department (IMD) for the monitoring network; XKDR Forum for the Air Quality API;
+Yug Kaushik for the CPCB Kaggle mirror; the World Air Quality Index project (aqicn.org) for the live feed.

@@ -1,0 +1,217 @@
+Model,station_id,MAE_failed
+Station average,site_5024,68.50847
+Station average,site_301,86.32439
+Station average,site_1420,75.696686
+Station average,site_108,53.418854
+Station average,site_1560,82.69888
+Station average,site_104,69.39825
+Station average,site_103,59.476315
+Station average,site_118,52.86442
+Station average,site_1421,69.50096
+Station average,site_1422,72.65145
+Station average,site_106,54.889
+Station average,site_114,43.26991
+Station average,site_117,68.587585
+Station average,site_1423,81.57004
+Station average,site_1424,63.83927
+Station average,site_109,52.43031
+Station average,site_1425,68.055855
+Station average,site_122,61.5465
+Station average,site_1561,88.37902
+Station average,site_115,63.12312
+Station average,site_1427,55.6634
+Station average,site_1426,73.32566
+Station average,site_1429,86.21955
+Station average,site_105,66.2232
+Station average,site_1428,71.142845
+Station average,site_1431,76.110535
+Station average,site_125,80.68787
+Station average,site_1563,63.925102
+Station average,site_124,77.67744
+Station average,site_1430,83.48625
+Station average,site_113,66.429306
+Station average,site_119,66.214134
+Station average,site_1432,73.647896
+Station average,site_1562,54.105843
+Station average,site_1435,83.31261
+Station average,site_1434,84.10885
+LSTM,site_5024,51.42287
+LSTM,site_301,65.31315
+LSTM,site_1420,58.699375
+LSTM,site_108,39.80957
+LSTM,site_1560,60.84191
+LSTM,site_104,50.891914
+LSTM,site_103,45.41031
+LSTM,site_118,44.454193
+LSTM,site_1421,49.089542
+LSTM,site_1422,49.068264
+LSTM,site_106,41.346306
+LSTM,site_114,37.843643
+LSTM,site_117,52.929478
+LSTM,site_1423,60.67382
+LSTM,site_1424,46.06079
+LSTM,site_109,42.37266
+LSTM,site_1425,50.85354
+LSTM,site_122,46.455788
+LSTM,site_1561,63.25629
+LSTM,site_115,56.751347
+LSTM,site_1427,41.301228
+LSTM,site_1426,54.279694
+LSTM,site_1429,63.238285
+LSTM,site_105,51.520893
+LSTM,site_1428,53.691685
+LSTM,site_1431,56.401737
+LSTM,site_125,59.48211
+LSTM,site_1563,46.90272
+LSTM,site_124,56.680084
+LSTM,site_1430,61.588142
+LSTM,site_113,54.892376
+LSTM,site_119,49.026463
+LSTM,site_1432,55.92856
+LSTM,site_1562,38.581844
+LSTM,site_1435,64.16848
+LSTM,site_1434,61.48121
+Transformer,site_5024,53.277653
+Transformer,site_301,66.8217
+Transformer,site_1420,57.425327
+Transformer,site_108,41.983547
+Transformer,site_1560,63.698235
+Transformer,site_104,52.96741
+Transformer,site_103,46.16326
+Transformer,site_118,45.211636
+Transformer,site_1421,52.77191
+Transformer,site_1422,54.249825
+Transformer,site_106,44.218636
+Transformer,site_114,38.32473
+Transformer,site_117,52.249016
+Transformer,site_1423,62.36403
+Transformer,site_1424,46.85534
+Transformer,site_109,44.7456
+Transformer,site_1425,51.801544
+Transformer,site_122,49.395267
+Transformer,site_1561,66.319244
+Transformer,site_115,59.289463
+Transformer,site_1427,42.829258
+Transformer,site_1426,57.97259
+Transformer,site_1429,63.931736
+Transformer,site_105,52.66052
+Transformer,site_1428,53.272606
+Transformer,site_1431,57.368618
+Transformer,site_125,60.761112
+Transformer,site_1563,47.25212
+Transformer,site_124,60.782997
+Transformer,site_1430,62.364174
+Transformer,site_113,57.65175
+Transformer,site_119,50.837036
+Transformer,site_1432,57.654907
+Transformer,site_1562,40.713932
+Transformer,site_1435,63.52259
+Transformer,site_1434,63.251022
+GAT-Transformer,site_5024,49.60663
+GAT-Transformer,site_301,63.226368
+GAT-Transformer,site_1420,58.279957
+GAT-Transformer,site_108,37.87035
+GAT-Transformer,site_1560,61.82381
+GAT-Transformer,site_104,48.319855
+GAT-Transformer,site_103,45.415756
+GAT-Transformer,site_118,45.80664
+GAT-Transformer,site_1421,48.623302
+GAT-Transformer,site_1422,50.85314
+GAT-Transformer,site_106,40.21634
+GAT-Transformer,site_114,37.178635
+GAT-Transformer,site_117,51.805046
+GAT-Transformer,site_1423,59.99981
+GAT-Transformer,site_1424,42.808895
+GAT-Transformer,site_109,39.641106
+GAT-Transformer,site_1425,49.55676
+GAT-Transformer,site_122,44.261314
+GAT-Transformer,site_1561,64.44119
+GAT-Transformer,site_115,52.49042
+GAT-Transformer,site_1427,42.42923
+GAT-Transformer,site_1426,53.878567
+GAT-Transformer,site_1429,62.451145
+GAT-Transformer,site_105,48.111794
+GAT-Transformer,site_1428,49.431145
+GAT-Transformer,site_1431,55.22869
+GAT-Transformer,site_125,56.698727
+GAT-Transformer,site_1563,43.15264
+GAT-Transformer,site_124,56.60685
+GAT-Transformer,site_1430,59.787296
+GAT-Transformer,site_113,53.47574
+GAT-Transformer,site_119,46.121273
+GAT-Transformer,site_1432,54.62857
+GAT-Transformer,site_1562,37.86807
+GAT-Transformer,site_1435,62.68414
+GAT-Transformer,site_1434,60.791378
+Robust LSTM,site_5024,39.15095
+Robust LSTM,site_301,51.97232
+Robust LSTM,site_1420,43.67429
+Robust LSTM,site_108,33.813213
+Robust LSTM,site_1560,47.241993
+Robust LSTM,site_104,40.216805
+Robust LSTM,site_103,34.64224
+Robust LSTM,site_118,39.804802
+Robust LSTM,site_1421,36.239956
+Robust LSTM,site_1422,36.898655
+Robust LSTM,site_106,35.33221
+Robust LSTM,site_114,33.10894
+Robust LSTM,site_117,39.18616
+Robust LSTM,site_1423,48.236786
+Robust LSTM,site_1424,33.733894
+Robust LSTM,site_109,36.40005
+Robust LSTM,site_1425,37.966133
+Robust LSTM,site_122,39.606266
+Robust LSTM,site_1561,46.615425
+Robust LSTM,site_115,51.754395
+Robust LSTM,site_1427,31.705015
+Robust LSTM,site_1426,41.763332
+Robust LSTM,site_1429,46.14911
+Robust LSTM,site_105,41.74187
+Robust LSTM,site_1428,36.942204
+Robust LSTM,site_1431,40.920975
+Robust LSTM,site_125,45.769
+Robust LSTM,site_1563,33.487568
+Robust LSTM,site_124,44.997524
+Robust LSTM,site_1430,45.050343
+Robust LSTM,site_113,48.49276
+Robust LSTM,site_119,34.818287
+Robust LSTM,site_1432,44.265175
+Robust LSTM,site_1562,32.977257
+Robust LSTM,site_1435,45.37306
+Robust LSTM,site_1434,47.58055
+Robust GAT-Transformer,site_5024,29.27826
+Robust GAT-Transformer,site_301,40.053738
+Robust GAT-Transformer,site_1420,34.35147
+Robust GAT-Transformer,site_108,26.471153
+Robust GAT-Transformer,site_1560,35.86836
+Robust GAT-Transformer,site_104,31.511318
+Robust GAT-Transformer,site_103,28.829216
+Robust GAT-Transformer,site_118,33.158367
+Robust GAT-Transformer,site_1421,25.281239
+Robust GAT-Transformer,site_1422,25.83899
+Robust GAT-Transformer,site_106,26.748697
+Robust GAT-Transformer,site_114,30.69402
+Robust GAT-Transformer,site_117,29.55428
+Robust GAT-Transformer,site_1423,37.40515
+Robust GAT-Transformer,site_1424,23.426968
+Robust GAT-Transformer,site_109,25.284758
+Robust GAT-Transformer,site_1425,27.00243
+Robust GAT-Transformer,site_122,31.23912
+Robust GAT-Transformer,site_1561,36.11208
+Robust GAT-Transformer,site_115,46.634502
+Robust GAT-Transformer,site_1427,26.720484
+Robust GAT-Transformer,site_1426,31.02528
+Robust GAT-Transformer,site_1429,34.553352
+Robust GAT-Transformer,site_105,31.165089
+Robust GAT-Transformer,site_1428,26.321295
+Robust GAT-Transformer,site_1431,28.730394
+Robust GAT-Transformer,site_125,32.79213
+Robust GAT-Transformer,site_1563,25.899387
+Robust GAT-Transformer,site_124,33.81176
+Robust GAT-Transformer,site_1430,32.885933
+Robust GAT-Transformer,site_113,42.80683
+Robust GAT-Transformer,site_119,25.442665
+Robust GAT-Transformer,site_1432,33.557674
+Robust GAT-Transformer,site_1562,23.556349
+Robust GAT-Transformer,site_1435,36.04309
+Robust GAT-Transformer,site_1434,34.24171
